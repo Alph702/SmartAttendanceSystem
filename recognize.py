@@ -4,7 +4,7 @@ import csv
 import datetime
 import time
 import numpy as np
-from utils import detect_faces_rgb, preprocess_face, get_embedding_from_face_tensor, load_all_encodings
+from utils import utils
 
 ATTENDANCE_CSV = "attendance.csv"
 THRESHOLD = 0.5  # start here and tune: lower = stricter
@@ -15,8 +15,8 @@ def mark_attendance(name):
         writer.writerow([name, datetime.datetime.utcnow().isoformat()])
     print(f"Marked {name} at {datetime.datetime.utcnow().isoformat()}")
 
-def main_loop():
-    known = load_all_encodings()
+def recognize(utils: utils):
+    known = utils.load_all_encodings()
     if not known:
         print("No registered encodings found. Run register.py first.")
         return
@@ -31,13 +31,13 @@ def main_loop():
         if not ret:
             break
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        bboxes = detect_faces_rgb(rgb)
+        bboxes = utils.detect_faces_rgb(rgb)
         for box in bboxes:
             x1,y1,x2,y2 = box
-            face_tensor = preprocess_face(rgb, box)
+            face_tensor = utils.preprocess_face(rgb, box)
             if face_tensor is None:
                 continue
-            emb = get_embedding_from_face_tensor(face_tensor)  # normalized
+            emb = utils.get_embedding_from_face_tensor(face_tensor)  # normalized
             # cosine similarity (emb · known) since normalized -> cos = dot
             sims = np.dot(vectors, emb)  # (N,)
             best_idx = int(np.argmax(sims))
@@ -62,4 +62,4 @@ def main_loop():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main_loop()
+    recognize(utils())
