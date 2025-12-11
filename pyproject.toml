@@ -1,0 +1,13 @@
+[project]
+name = "smartattendancesystem"
+version = "0.1.0"
+description = "Smart Attendance System"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mediapipe>=0.10.21",
+    "numpy>=1.26.4",
+    "onnxruntime>=1.23.2",
+    "opencv-python>=4.11.0.86",
+]
+
