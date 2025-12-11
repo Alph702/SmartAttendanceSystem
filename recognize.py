@@ -15,7 +15,7 @@ def mark_attendance(name):
         writer.writerow([name, datetime.datetime.utcnow().isoformat()])
     print(f"Marked {name} at {datetime.datetime.utcnow().isoformat()}")
 
-def recognize(utils: utils):
+def recognize(utils: utils, vc: cv2.VideoCapture):
     known = utils.load_all_encodings()
     if not known:
         print("No registered encodings found. Run register.py first.")
@@ -24,7 +24,7 @@ def recognize(utils: utils):
     vectors = np.stack([known[n] for n in names], axis=0)  # (N, D)
 
     last_seen = {}  # throttle per name (seconds)
-    VC = cv2.VideoCapture(0)
+    VC = vc
     print("Starting recognition. Press q to quit.")
     while True:
         ret, frame = VC.read()
@@ -58,7 +58,6 @@ def recognize(utils: utils):
         cv2.imshow("Mediapipe+ONNX Attendance - q to quit", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
-    VC.release()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":

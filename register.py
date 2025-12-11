@@ -2,8 +2,8 @@
 import cv2
 from utils import utils
 
-def register_student(name, utils: utils):
-    vc = cv2.VideoCapture(0)
+def register_student(name, utils: utils, vc: cv2.VideoCapture):
+    vc = vc
     print("Press SPACE when your face is visible to capture and register. Press q to quit.")
     while True:
         ret, frame = vc.read()
@@ -32,7 +32,7 @@ def register_student(name, utils: utils):
             break
         if key == ord("q"):
             break
-    vc.release()
+    # vc.release()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
