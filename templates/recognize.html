@@ -1,0 +1,45 @@
+{% extends "base.html" %} {% block content %}
+<div style="max-width: 900px; margin: 0 auto">
+  <div
+    style="
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 1rem;
+    "
+  >
+    <h2>Live Attendance</h2>
+    <span style="color: var(--success); font-size: 0.9rem"
+      >● System Active</span
+    >
+  </div>
+
+  <div class="glass-panel" style="padding: 1rem">
+    <div class="video-container">
+      <img
+        src="{{ url_for('video_feed', mode='recognize') }}"
+        class="video-feed"
+        alt="Recognition Feed"
+      />
+    </div>
+  </div>
+
+  <div
+    style="
+      margin-top: 2rem;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 1rem;
+      border-radius: 8px;
+    "
+  >
+    <h4 style="color: var(--text-muted); margin-bottom: 0.5rem">
+      Instructions
+    </h4>
+    <p style="font-size: 0.9rem; color: #888">
+      Ensure good lighting. The system will automatically mark attendance for
+      recognized faces. A green box indicates a successful match. Red indicates
+      an unknown person.
+    </p>
+  </div>
+</div>
+{% endblock %}
