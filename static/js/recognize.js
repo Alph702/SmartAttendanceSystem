@@ -161,8 +161,15 @@ function startRecognitionLoop() {
                 body: JSON.stringify({ image: imageData }),
             });
             const data = await response.json();
-            statusLabel.innerText = "● System Active";
-            statusLabel.style.color = "var(--success)";
+
+            if (data.attendance_error) {
+                statusLabel.innerText = `● ${data.attendance_error}`;
+                statusLabel.style.color = "var(--danger)"; // Or maybe orange for warning
+            } else {
+                statusLabel.innerText = "● System Active";
+                statusLabel.style.color = "var(--success)";
+            }
+
             if (data.success) {
                 const matches = data.matches.map((m) => {
                     return {

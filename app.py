@@ -35,14 +35,20 @@ load_encodings()
 # --- Helper Functions ---
 
 def mark_attendance(name):
-    """Marks attendance in CSV with timestamp."""
+    """Marks attendance in CSV with timestamp. Returns (success, message)."""
     try:
+        # Check if we can write to file
         with open(ATTENDANCE_CSV, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([name, datetime.datetime.utcnow().isoformat()])
         print(f"Marked attendance for {name}")
+        return True, "Success"
+    except PermissionError:
+        print(f"Permission Error marking attendance for {name}")
+        return False, "Permission requested failed. Close Excel?"
     except Exception as e:
         print(f"Error marking attendance: {e}")
+        return False, str(e)
 
 def decode_base64_image(data_url):
     """
@@ -126,6 +132,7 @@ def api_recognize():
     bboxes = _utils.detect_faces_rgb(rgb)
     
     matches_payload = []
+    attendance_error = None
     
     names_list = list(known_encodings.keys())
     
@@ -153,9 +160,12 @@ def api_recognize():
                     # Mark attendance logic
                     now = time.time()
                     if (name not in last_seen) or (now - last_seen[name] > ATTENDANCE_COOLDOWN):
-                        mark_attendance(name)
-                        last_seen[name] = now
-                        newly_marked = True
+                        success, msg = mark_attendance(name)
+                        if success:
+                            last_seen[name] = now
+                            newly_marked = True
+                        else:
+                            attendance_error = msg
             
             matches_payload.append({
                 "box": box, # [x1, y1, x2, y2]
@@ -172,7 +182,7 @@ def api_recognize():
                 "similarity": 0.0
             })
 
-    return jsonify({"success": True, "matches": matches_payload})
+    return jsonify({"success": True, "matches": matches_payload, "attendance_error": attendance_error})
 
 if __name__ == "__main__":
     # Run the app
