@@ -1,223 +1,54 @@
 {% extends "base.html" %} {% block content %}
-<div style="max-width: 800px; margin: 0 auto">
-  <h2
-    style="
+<!-- Back Button (Mobile Only via CSS) -->
+<a href="/" class="fullscreen-back-btn">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19 12H5" />
+    <path d="M12 19l-7-7 7-7" />
+  </svg>
+</a>
+
+<div class="container" id="mainContainer">
+  <!-- Header (Hidden on Mobile Fullscreen via CSS) -->
+  <h2 class="desktop-header" style="
       margin-bottom: 2rem;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       padding-bottom: 1rem;
-    "
-  >
+    ">
     Register New User
   </h2>
 
-  <div class="glass-panel" style="padding: 2rem">
-    <div style="margin-bottom: 2rem">
-      <label
-        style="display: block; margin-bottom: 0.5rem; color: var(--text-muted)"
-        >Full Name</label
-      >
+  <!-- Video Container -->
+  <div class="fullscreen-video-container">
+    <video id="videoElement" autoplay playsinline muted></video>
+    <canvas id="overlayCanvas"></canvas>
+    <canvas id="captureCanvas" style="display: none"></canvas>
+  </div>
+
+  <!-- Controls -->
+  <div class="bottom-sheet">
+    <h3 class="mobile-only" style="color: var(--primary-yellow); margin-bottom: 0.5rem; display: none">
+      Register Face
+    </h3>
+
+    <div>
+      <label style="
+          display: block;
+          margin-bottom: 0.5rem;
+          color: var(--text-muted);
+          font-size: 0.9rem;
+        ">Full Name</label>
       <input type="text" id="username" placeholder="e.g. John Doe" />
     </div>
 
-    <div
-      class="video-container"
-      style="margin-bottom: 2rem; position: relative; background: #000"
-    >
-      <video
-        id="videoElement"
-        autoplay
-        playsinline
-        muted
-        style="width: 100%; height: 100%; object-fit: contain"
-      ></video>
-      <canvas
-        id="overlayCanvas"
-        style="
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          pointer-events: none;
-        "
-      ></canvas>
-      <canvas id="captureCanvas" style="display: none"></canvas>
-    </div>
-
-    <div style="display: flex; gap: 1rem; align-items: center">
-      <button id="captureBtn" class="btn btn-primary">
+    <div style="display: flex; flex-direction: column; gap: 1rem">
+      <button id="captureBtn" class="btn btn-primary" style="width: 100%">
         Capture & Register
       </button>
-      <div id="statusArea"></div>
+      <div id="statusArea" style="min-height: 20px"></div>
     </div>
   </div>
 </div>
 
-<script>
-  const video = document.getElementById("videoElement");
-  const captureBtn = document.getElementById("captureBtn");
-  const usernameInput = document.getElementById("username");
-  const statusArea = document.getElementById("statusArea");
-  const captureCanvas = document.getElementById("captureCanvas");
-  const overlayCanvas = document.getElementById("overlayCanvas");
-  const ctxCapture = captureCanvas.getContext("2d");
-  const ctxOverlay = overlayCanvas.getContext("2d");
-
-  let isProcessing = false;
-
-  // Start Webcam
-  async function startCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-      });
-      video.srcObject = stream;
-      startFeedbackLoop();
-    } catch (err) {
-      console.error("Camera Error:", err);
-      statusArea.innerHTML = `<span class="status-error">Camera Access Denied or Not Available</span>`;
-    }
-  }
-
-  startCamera();
-
-  // Feedback Loop to show bounding boxes during registration
-  function startFeedbackLoop() {
-    setInterval(async () => {
-      if (isProcessing) return;
-      isProcessing = true;
-
-      if (overlayCanvas.width !== video.clientWidth) {
-        overlayCanvas.width = video.clientWidth;
-        overlayCanvas.height = video.clientHeight;
-      }
-
-      // Capture Frame for Detection
-      const sendWidth = 640;
-      const scale = sendWidth / video.videoWidth;
-      const sendHeight = video.videoHeight * scale;
-
-      captureCanvas.width = sendWidth;
-      captureCanvas.height = sendHeight;
-      ctxCapture.drawImage(
-        video,
-        0,
-        0,
-        captureCanvas.width,
-        captureCanvas.height
-      );
-
-      const imageData = captureCanvas.toDataURL("image/jpeg", 0.7);
-
-      try {
-        // Reuse the recognize endpoint just for detection
-        const response = await fetch("/api/recognize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: imageData }),
-        });
-        const data = await response.json();
-
-        if (data.success) {
-          const matches = data.matches.map((m) => {
-            return {
-              ...m,
-              box: m.box.map((coord) => coord / scale),
-            };
-          });
-          drawBoxes(matches);
-        }
-      } catch (err) {
-        // console.error(err); // mute errors to avoid console spam
-      } finally {
-        isProcessing = false;
-      }
-    }, 500);
-  }
-
-  function drawBoxes(matches) {
-    ctxOverlay.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-    const videoRatio = video.videoWidth / video.videoHeight;
-    const canvasRatio = overlayCanvas.width / overlayCanvas.height;
-    let drawWidth, drawHeight, startX, startY;
-
-    if (canvasRatio > videoRatio) {
-      drawHeight = overlayCanvas.height;
-      drawWidth = drawHeight * videoRatio;
-      startX = (overlayCanvas.width - drawWidth) / 2;
-      startY = 0;
-    } else {
-      drawWidth = overlayCanvas.width;
-      drawHeight = drawWidth / videoRatio;
-      startX = 0;
-      startY = (overlayCanvas.height - drawHeight) / 2;
-    }
-
-    const scale = drawWidth / video.videoWidth;
-
-    matches.forEach((match) => {
-      const [x1, y1, x2, y2] = match.box;
-
-      const dx = startX + x1 * scale;
-      const dy = startY + y1 * scale;
-      const dw = (x2 - x1) * scale;
-      const dh = (y2 - y1) * scale;
-
-      // Always Green for Register Feedback since we just want to know if face is detected
-      ctxOverlay.strokeStyle = "#00FF00";
-      ctxOverlay.lineWidth = 3;
-      ctxOverlay.strokeRect(dx, dy, dw, dh);
-    });
-  }
-
-  captureBtn.addEventListener("click", async () => {
-    const name = usernameInput.value.trim();
-    if (!name) {
-      alert("Please enter a name first.");
-      return;
-    }
-
-    captureBtn.disabled = true;
-    captureBtn.innerText = "Processing...";
-
-    // Full Quality Capture for Registration
-    captureCanvas.width = video.videoWidth;
-    captureCanvas.height = video.videoHeight;
-    ctxCapture.drawImage(
-      video,
-      0,
-      0,
-      captureCanvas.width,
-      captureCanvas.height
-    );
-    const imageData = captureCanvas.toDataURL("image/jpeg", 0.9);
-
-    try {
-      const response = await fetch("/api/register_capture", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name, image: imageData }),
-      });
-      const data = await response.json();
-
-      if (data.success) {
-        statusArea.innerHTML = `<span class="status-success" style="display:inline-block; margin:0;">${data.message}</span>`;
-        usernameInput.value = "";
-      } else {
-        statusArea.innerHTML = `<span class="status-error" style="display:inline-block; margin:0;">${data.message}</span>`;
-      }
-    } catch (e) {
-      console.error(e);
-      statusArea.innerHTML = `<span class="status-error" style="display:inline-block; margin:0;">Network Error</span>`;
-    } finally {
-      captureBtn.disabled = false;
-      captureBtn.innerText = "Capture & Register";
-    }
-  });
-</script>
+<script src="{{ url_for('static', filename='js/register.js') }}"></script>
 {% endblock %}

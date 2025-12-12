@@ -133,14 +133,17 @@ input[type="text"] {
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: white;
-    border-radius: 8px;
-    font-size: 1rem;
+    border-radius: 12px;
+    font-size: 16px; /* Prevents auto-zoom on iOS */
     outline: none;
-    -webkit-appearance: none; /* Mobile fix */
+    -webkit-appearance: none;
+    appearance: none;
+    transition: all 0.3s ease;
 }
 
 input[type="text"]:focus {
     border-color: var(--primary-yellow);
+    background: rgba(0,0,0,0.6);
 }
 
 /* Video Feed Container */
@@ -212,6 +215,22 @@ input[type="text"]:focus {
     background: rgba(255, 77, 77, 0.1);
 }
 
+/* Status Pill */
+.status-pill {
+    position: fixed;
+    top: 7rem; /* Default below navbar */
+    right: 1rem;
+    z-index: 201; /* Above navbar */
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(10px);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 215, 0, 0.2);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 /* Mobile Optimizations */
 @media (max-width: 768px) {
     .navbar {
@@ -247,5 +266,122 @@ input[type="text"]:focus {
         width: 100%;
         text-align: center;
         padding: 1rem;
+    }
+}
+/* Responsive Video & Controls */
+
+/* Default Desktop Styles */
+.fullscreen-video-container {
+    position: relative;
+    width: 100%;
+    max-width: 800px; /* Desktop width limit */
+    aspect-ratio: 16/9;
+    background: #000;
+    margin: 2rem auto;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    box-shadow: 0 0 30px rgba(0,0,0,0.5);
+    z-index: 1;
+}
+
+.fullscreen-video-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain; /* Desktop default */
+}
+
+.fullscreen-video-container canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.bottom-sheet {
+    position: static;
+    /* Glassmorphism restore for desktop */
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--glass-border);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+    
+    padding: 2rem;
+    border-radius: 16px;
+    margin: 2rem auto;
+    max-width: 600px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.fullscreen-back-btn {
+    display: none; /* Hide custom back button on desktop, use Navbar */
+}
+
+/* Mobile Fullscreen Overrides */
+@media (max-width: 768px) {
+    .fullscreen-video-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        margin: 0;
+        border-radius: 0;
+        border: none;
+        z-index: -1;
+    }
+
+    .fullscreen-video-container video {
+        object-fit: cover; /* Mobile immersive */
+    }
+
+    .bottom-sheet {
+        position: fixed;
+        bottom: 1.5rem; /* Float off bottom */
+        left: 1rem;
+        right: 1rem; /* Float off sides */
+        width: auto; /* Allow auto width based on margins */
+        max-width: none;
+        
+        /* Apple-style Glass */
+        background: rgba(20, 20, 20, 0.75);
+        backdrop-filter: blur(25px);
+        -webkit-backdrop-filter: blur(25px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        
+        border-radius: 28px; /* High rounding */
+        padding: 1.5rem;
+        margin-bottom: env(safe-area-inset-bottom);
+        z-index: 100;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+    }
+
+    .fullscreen-back-btn {
+        display: none; /* Navbar is back, no need for redundant back button */
+    }
+    
+    /* Navbar Overlay for Mobile Fullscreen */
+    body.fullscreen-mode .navbar {
+        display: flex; /* Restore it */
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        background: rgba(0, 0, 0, 0.4); /* More transparent */
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        z-index: 200;
+        padding: 0.8rem 1rem;
+    }
+    
+    body.fullscreen-mode .container {
+        margin: 0;
+        padding: 0;
     }
 }

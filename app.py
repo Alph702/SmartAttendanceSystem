@@ -5,7 +5,7 @@ import datetime
 import csv
 import base64
 import numpy as np
-from flask import Flask, render_template, Response, request, jsonify
+from flask import Flask, render_template, Response, request, jsonify, url_for
 from utils import utils
 
 app = Flask(__name__)
@@ -177,4 +177,4 @@ def api_recognize():
 if __name__ == "__main__":
     # Run the app
     # host='0.0.0.0' makes it accessible on network, use with caution
-    app.run(host='0.0.0.0', debug=True, port=5000, threaded=True, use_reloader=False)
+    app.run(host='0.0.0.0', debug=True, port=5000, threaded=True, use_reloader=True)

@@ -1,70 +1,54 @@
 {% extends "base.html" %} {% block content %}
-<div style="max-width: 900px; margin: 0 auto">
-  <div
-    style="
+<!-- Back Button (Mobile Only via CSS) -->
+<a href="/" class="fullscreen-back-btn">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19 12H5" />
+    <path d="M12 19l-7-7 7-7" />
+  </svg>
+</a>
+
+<!-- Status Pill -->
+<div class="status-pill">
+  <span id="systemStatus" style="color: var(--success); font-weight: 600; font-size: 0.85rem">● Connecting...</span>
+</div>
+
+<div class="container" id="mainContainer">
+  <!-- Header (Hidden on Mobile Fullscreen via CSS) -->
+  <div class="desktop-header" style="
       display: flex;
       justify-content: space-between;
       align-items: baseline;
       margin-bottom: 1rem;
-    "
-  >
+    ">
     <h2>Live Attendance</h2>
-    <span id="systemStatus" style="color: var(--success); font-size: 0.9rem"
-      >● Connecting Camera...</span
-    >
   </div>
 
-  <div class="glass-panel" style="padding: 1rem">
-    <div class="video-container" style="position: relative; background: #000">
-      <!-- Local Camera Feed - Object Fit Contain ensures Overlay Match -->
-      <video
-        id="videoElement"
-        autoplay
-        playsinline
-        muted
-        style="width: 100%; height: 100%; object-fit: contain"
-      ></video>
+  <!-- Video Container -->
+  <div class="fullscreen-video-container">
+    <video id="videoElement" autoplay playsinline muted></video>
+    <canvas id="overlayCanvas"></canvas>
+    <canvas id="captureCanvas" style="display: none"></canvas>
+  </div>
 
-      <!-- Overlay Canvas for Bounding Boxes -->
-      <canvas
-        id="overlayCanvas"
-        style="
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          pointer-events: none;
-        "
-      ></canvas>
-
-      <!-- Hidden Canvas for Capture -->
-      <canvas id="captureCanvas" style="display: none"></canvas>
+  <!-- Controls / Info -->
+  <div class="bottom-sheet" style="
+      padding-top: 1.5rem;
+      padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+    ">
+    <div style="text-align: center">
+      <h3 style="color: white; font-size: 1.1rem; margin-bottom: 0.2rem">
+        Live Attendance
+      </h3>
+      <p style="color: var(--text-muted); font-size: 0.9rem">
+        Look at the camera to mark presence.
+      </p>
     </div>
-  </div>
-
-  <div
-    style="
-      margin-top: 2rem;
-      background: rgba(0, 0, 0, 0.3);
-      padding: 1rem;
-      border-radius: 8px;
-    "
-  >
-    <h4 style="color: var(--text-muted); margin-bottom: 0.5rem">
-      Instructions
-    </h4>
-    <p style="font-size: 0.9rem; color: #888">
-      Ensure good lighting. The system automatically marks attendance for
-      recognized faces.
-    </p>
   </div>
 </div>
 
 <!-- Success Modal -->
-<div
-  id="successModal"
-  style="
+<div id="successModal" style="
     display: none;
     position: fixed;
     top: 0;
@@ -75,21 +59,16 @@
     z-index: 2000;
     align-items: center;
     justify-content: center;
-  "
->
-  <div
-    class="glass-panel"
-    style="
+  ">
+  <div class="glass-panel" style="
       padding: 2rem;
       text-align: center;
       max-width: 90%;
       width: 400px;
       border-color: var(--success);
       box-shadow: 0 0 50px rgba(0, 255, 127, 0.2);
-    "
-  >
-    <div
-      style="
+    ">
+    <div style="
         width: 60px;
         height: 60px;
         background: var(--success);
@@ -98,209 +77,27 @@
         display: flex;
         align-items: center;
         justify-content: center;
-      "
-    >
-      <svg
-        width="32"
-        height="32"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="black"
-        stroke-width="3"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
+      ">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3" stroke-linecap="round"
+        stroke-linejoin="round">
         <polyline points="20 6 9 17 4 12"></polyline>
       </svg>
     </div>
-    <h2 style="color: var(--success); margin-bottom: 0.5rem">
-      Attendance Marked!
-    </h2>
-    <p
-      id="modalName"
-      style="
+    <h2 style="color: var(--success); margin-bottom: 0.5rem">Marked!</h2>
+    <p id="modalName" style="
         font-size: 1.5rem;
         font-weight: 700;
         color: white;
         margin-bottom: 2rem;
-      "
-    >
+      ">
       User Name
     </p>
-    <button
-      onclick="closeModal()"
-      class="btn btn-primary"
-      style="background: var(--success); width: 100%; border: none"
-    >
+    <button onclick="closeModal()" class="btn btn-primary"
+      style="background: var(--success); width: 100%; border: none">
       OK
     </button>
   </div>
 </div>
 
-<script>
-  const video = document.getElementById("videoElement");
-  const overlayCanvas = document.getElementById("overlayCanvas");
-  const captureCanvas = document.getElementById("captureCanvas");
-  const ctxOverlay = overlayCanvas.getContext("2d");
-  const ctxCapture = captureCanvas.getContext("2d");
-  const statusLabel = document.getElementById("systemStatus");
-  const successModal = document.getElementById("successModal");
-  const modalName = document.getElementById("modalName");
-
-  let isProcessing = false;
-  let isModalOpen = false;
-
-  // Start Webcam
-  async function startCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-      });
-      video.srcObject = stream;
-      statusLabel.innerText = "● System Active";
-      startRecognitionLoop();
-    } catch (err) {
-      console.error("Camera Error:", err);
-      statusLabel.innerText = "● Camera Error";
-      statusLabel.style.color = "var(--danger)";
-    }
-  }
-
-  startCamera();
-
-  function showModal(name) {
-    isModalOpen = true;
-    modalName.innerText = name;
-    successModal.style.display = "flex";
-  }
-
-  function closeModal() {
-    successModal.style.display = "none";
-    isModalOpen = false;
-  }
-
-  function drawBoxes(matches) {
-    // Clear previous drawings
-    ctxOverlay.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-    // Since object-fit is contain, we need to calculate the actual displayed video area
-    const videoRatio = video.videoWidth / video.videoHeight;
-    const canvasRatio = overlayCanvas.width / overlayCanvas.height;
-
-    let drawWidth, drawHeight, startX, startY;
-
-    if (canvasRatio > videoRatio) {
-      // Canvas is wider than video (pillarbox)
-      drawHeight = overlayCanvas.height;
-      drawWidth = drawHeight * videoRatio;
-      startX = (overlayCanvas.width - drawWidth) / 2;
-      startY = 0;
-    } else {
-      // Canvas is taller than video (letterbox)
-      drawWidth = overlayCanvas.width;
-      drawHeight = drawWidth / videoRatio;
-      startX = 0;
-      startY = (overlayCanvas.height - drawHeight) / 2;
-    }
-
-    const scale = drawWidth / video.videoWidth;
-
-    matches.forEach((match) => {
-      const [x1, y1, x2, y2] = match.box;
-      const name = match.name;
-      const sim = match.similarity;
-
-      // Check for new attendance
-      if (match.newly_marked && !isModalOpen) {
-        showModal(name);
-      }
-
-      // Apply coordinates scaling and offset
-      const dx = startX + x1 * scale;
-      const dy = startY + y1 * scale;
-      const dw = (x2 - x1) * scale;
-      const dh = (y2 - y1) * scale;
-
-      // Determine Color
-      let color = "#FF0000"; // Red for unknown
-      if (name !== "Unknown" && !name.startsWith("Unknown")) {
-        color = "#00FF00"; // Green
-      }
-
-      // Draw Box
-      ctxOverlay.strokeStyle = color;
-      ctxOverlay.lineWidth = 3;
-      ctxOverlay.strokeRect(dx, dy, dw, dh);
-
-      // Draw Label
-      ctxOverlay.fillStyle = color;
-      ctxOverlay.font = "bold 16px Inter";
-      ctxOverlay.fillText(
-        `${name} (${sim.toFixed(2)})`,
-        dx,
-        dy > 20 ? dy - 10 : dy + 20
-      );
-    });
-  }
-
-  function startRecognitionLoop() {
-    setInterval(async () => {
-      // Don't pile up requests
-      if (isProcessing || isModalOpen) return;
-      isProcessing = true;
-
-      // Sync canvas sizes
-      if (overlayCanvas.width !== video.clientWidth) {
-        overlayCanvas.width = video.clientWidth;
-        overlayCanvas.height = video.clientHeight;
-      }
-
-      // Capture Frame (Scale down to 640px max width for speed)
-      const sendWidth = 640;
-      const scale = sendWidth / video.videoWidth;
-      const sendHeight = video.videoHeight * scale;
-
-      captureCanvas.width = sendWidth;
-      captureCanvas.height = sendHeight;
-      ctxCapture.drawImage(
-        video,
-        0,
-        0,
-        captureCanvas.width,
-        captureCanvas.height
-      );
-
-      const imageData = captureCanvas.toDataURL("image/jpeg", 0.7);
-
-      try {
-        const response = await fetch("/api/recognize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: imageData }),
-        });
-        const data = await response.json();
-
-        if (data.success) {
-          // Start drawing relative to video content size, not scaled sent size
-          const matches = data.matches.map((m) => {
-            return {
-              ...m,
-              box: m.box.map((coord) => coord / scale), // Upscale back to original video dimensions
-            };
-          });
-
-          drawBoxes(matches);
-        }
-      } catch (err) {
-        console.error("Recognition Loop Error:", err);
-      } finally {
-        isProcessing = false;
-      }
-    }, 500); // 2 FPS
-  }
-</script>
+<script src="{{ url_for('static', filename='js/recognize.js') }}"></script>
 {% endblock %}
