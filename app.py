@@ -3,6 +3,7 @@ import threading
 import time
 import datetime
 import csv
+import base64
 import numpy as np
 from flask import Flask, render_template, Response, request, jsonify
 from utils import utils
@@ -10,8 +11,6 @@ from utils import utils
 app = Flask(__name__)
 
 # --- Global State & Configuration ---
-camera_lock = threading.Lock()
-camera = cv2.VideoCapture(0)
 _utils = utils()  # Initialize utilities (loads ONNX models)
 
 # Recognition State
@@ -45,92 +44,20 @@ def mark_attendance(name):
     except Exception as e:
         print(f"Error marking attendance: {e}")
 
-def process_frame(frame, mode='raw'):
+def decode_base64_image(data_url):
     """
-    Processes a frame based on the mode.
-    Returns the processed frame (annotated).
+    Decodes a base64 data URL into an OpenCV image (BGR).
     """
-    if mode == 'raw':
-        return frame
-
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    bboxes = _utils.detect_faces_rgb(rgb)
-
-    if mode == 'register':
-        # Just draw rectangles for feedback
-        for (x1,y1,x2,y2) in bboxes:
-            cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,0), 2)
-    
-    elif mode == 'recognize':
-        # Recognition logic
-        names_list = list(known_encodings.keys())
-        if not names_list:
-            # No database
-            for (x1,y1,x2,y2) in bboxes:
-                cv2.rectangle(frame, (x1,y1), (x2,y2), (0,0,255), 2)
-                cv2.putText(frame, "No DB", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
-        else:
-            vectors = np.stack([known_encodings[n] for n in names_list], axis=0)
-            
-            for box in bboxes:
-                x1, y1, x2, y2 = box
-                face_tensor = _utils.preprocess_face(rgb, box)
-                
-                label = "Unknown"
-                color = (0, 0, 255) # Red for unknown
-                
-                if face_tensor is not None:
-                    emb = _utils.get_embedding_from_face_tensor(face_tensor)
-                    
-                    # Cosine similarity
-                    sims = np.dot(vectors, emb)
-                    best_idx = int(np.argmax(sims))
-                    best_sim = float(sims[best_idx])
-                    
-                    if best_sim >= RECOGNITION_THRESHOLD:
-                        name = names_list[best_idx]
-                        label = f"{name} ({best_sim:.2f})"
-                        color = (0, 255, 0) # Green for known
-                        
-                        # Mark attendance logic
-                        now = time.time()
-                        if (name not in last_seen) or (now - last_seen[name] > ATTENDANCE_COOLDOWN):
-                            mark_attendance(name)
-                            last_seen[name] = now
-                    else:
-                        label = f"Unknown ({best_sim:.2f})"
-
-                cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
-                cv2.putText(frame, label, (x1, max(20, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
-
-    return frame
-
-def generate_frames(mode='raw'):
-    """Generator function for video streaming."""
-    global camera
-    while True:
-        with camera_lock:
-            if not camera.isOpened():
-                camera = cv2.VideoCapture(0)
-                time.sleep(0.1)
-                
-            success, frame = camera.read()
-        
-        if not success:
-            time.sleep(0.1)
-            continue
-
-        # Process frame based on mode
-        frame = process_frame(frame, mode=mode)
-
-        # Encode header
-        ret, buffer = cv2.imencode('.jpg', frame)
-        if not ret:
-            continue
-            
-        frame_bytes = buffer.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+    try:
+        # data:image/jpeg;base64,.....
+        header, encoded = data_url.split(",", 1)
+        data = base64.b64decode(encoded)
+        np_arr = np.frombuffer(data, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        return img
+    except Exception as e:
+        print(f"Error decoding image: {e}")
+        return None
 
 # --- Routes ---
 
@@ -148,26 +75,18 @@ def recognize_page():
     load_encodings()
     return render_template('recognize.html')
 
-@app.route('/video_feed')
-def video_feed():
-    mode = request.args.get('mode', 'raw')
-    return Response(generate_frames(mode=mode), mimetype='multipart/x-mixed-replace; boundary=frame')
-
 @app.route('/api/register_capture', methods=['POST'])
 def register_capture():
     data = request.json
     name = data.get('name')
-    if not name:
-        return jsonify({"success": False, "message": "Name is required."})
-
-    # Capture one frame
-    with camera_lock:
-        if not camera.isOpened():
-             return jsonify({"success": False, "message": "Camera not active."})
-        success, frame = camera.read()
+    image_data = data.get('image')
     
-    if not success:
-        return jsonify({"success": False, "message": "Failed to capture frame."})
+    if not name or not image_data:
+        return jsonify({"success": False, "message": "Name and Image are required."})
+
+    frame = decode_base64_image(image_data)
+    if frame is None:
+        return jsonify({"success": False, "message": "Invalid image data."})
 
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     bboxes = _utils.detect_faces_rgb(rgb)
@@ -191,7 +110,71 @@ def register_capture():
     
     return jsonify({"success": True, "message": f"Successfully registered {name}!"})
 
+@app.route('/api/recognize', methods=['POST'])
+def api_recognize():
+    data = request.json
+    image_data = data.get('image')
+    
+    if not image_data:
+        return jsonify({"success": False, "matches": []})
+
+    frame = decode_base64_image(image_data)
+    if frame is None:
+        return jsonify({"success": False, "matches": []})
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    bboxes = _utils.detect_faces_rgb(rgb)
+    
+    matches_payload = []
+    
+    names_list = list(known_encodings.keys())
+    
+    if names_list:
+        vectors = np.stack([known_encodings[n] for n in names_list], axis=0)
+        
+        for box in bboxes:
+            # box is [x1, y1, x2, y2]
+            face_tensor = _utils.preprocess_face(rgb, box)
+            
+            name = "Unknown"
+            sim = 0.0
+            newly_marked = False
+            
+            if face_tensor is not None:
+                emb = _utils.get_embedding_from_face_tensor(face_tensor)
+                sims = np.dot(vectors, emb)
+                best_idx = int(np.argmax(sims))
+                best_sim = float(sims[best_idx])
+                
+                if best_sim >= RECOGNITION_THRESHOLD:
+                    name = names_list[best_idx]
+                    sim = best_sim
+                    
+                    # Mark attendance logic
+                    now = time.time()
+                    if (name not in last_seen) or (now - last_seen[name] > ATTENDANCE_COOLDOWN):
+                        mark_attendance(name)
+                        last_seen[name] = now
+                        newly_marked = True
+            
+            matches_payload.append({
+                "box": box, # [x1, y1, x2, y2]
+                "name": name,
+                "similarity": float(sim),
+                "newly_marked": newly_marked
+            })
+    else:
+        # No known encodings, but we detected faces
+        for box in bboxes:
+            matches_payload.append({
+                "box": box,
+                "name": "Unknown (No DB)",
+                "similarity": 0.0
+            })
+
+    return jsonify({"success": True, "matches": matches_payload})
+
 if __name__ == "__main__":
     # Run the app
     # host='0.0.0.0' makes it accessible on network, use with caution
-    app.run(debug=True, port=5000, threaded=True, use_reloader=False)
+    app.run(host='0.0.0.0', debug=True, port=5000, threaded=True, use_reloader=False)

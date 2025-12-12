@@ -1,0 +1,39 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "16"
+
+      - name: Install Bubblewrap
+        run: npm install -g @bubblewrap/cli
+
+      - name: Initialize Bubblewrap
+        # Tries to initialize with defaults.
+        # Note: In a real scenario, this might need a TWA Manifest or JDK setup.
+        # This is a simplified example for the user.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-11-jdk
+          bubblewrap init --manifest static/manifest.json --directory apk_build
+
+      - name: Build
+        working-directory: apk_build
+        run: bubblewrap build
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v2
+        with:
+          name: smart-attendance-apk
+          path: apk_build/**/*.apk

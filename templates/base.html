@@ -2,8 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>{% block title %}Smart Attendance{% endblock %}</title>
+
+    <!-- PWA Settings -->
+    <meta name="theme-color" content="#FFD700" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <link
+      rel="manifest"
+      href="{{ url_for('static', filename='manifest.json') }}"
+    />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -14,6 +30,23 @@
       rel="stylesheet"
       href="{{ url_for('static', filename='css/style.css') }}"
     />
+
+    <!-- Service Worker Registration -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("{{ url_for('static', filename='sw.js') }}")
+            .then((registration) => {
+              console.log("SW registered:", registration);
+            })
+            .catch((error) => {
+              console.log("SW registration failed:", error);
+            });
+        });
+      }
+    </script>
+
     <style>
       /* Specific page overrides can go here */
     </style>
@@ -23,9 +56,8 @@
       class="navbar glass-panel"
       style="
         border-radius: 0;
-        border-left: none;
-        border-right: none;
-        border-top: none;
+        border: none;
+        border-bottom: 1px solid rgba(255, 215, 0, 0.1);
       "
     >
       <a href="/" class="nav-brand">
@@ -71,9 +103,5 @@
     </nav>
 
     <div class="container">{% block content %}{% endblock %}</div>
-
-    <script>
-      // Global scripts if needed
-    </script>
   </body>
 </html>
