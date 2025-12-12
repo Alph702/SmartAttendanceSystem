@@ -29,6 +29,10 @@ const CONFIG = {
 // Application State
 let isProcessingFrame = false;
 let isSuccessModalOpen = false;
+let currentModalUser = null;
+let framesWithoutUser = 0;
+const MAX_MISSING_FRAMES = 4; // Approx 2 seconds grace period
+let acknowledgedUsers = new Map(); // Name -> framesMissingCount
 
 // --- Initialization ---
 
@@ -63,8 +67,20 @@ startCamera();
 
 // --- UI Helpers ---
 
-function openModal(title, message, colorVar) {
+function openModal(title, message, colorVar, relatedUser = null) {
+    // If modal is already open for THIS user, just return (avoid flicker)
+    if (isSuccessModalOpen && currentModalUser === relatedUser && relatedUser !== null) {
+        return;
+    }
+
+    // If user has acknowledged this recently, do not show
+    if (relatedUser && acknowledgedUsers.has(relatedUser)) {
+        return;
+    }
+
     isSuccessModalOpen = true;
+    currentModalUser = relatedUser;
+    framesWithoutUser = 0;
 
     // Update Content
     modalTitle.innerText = title;
@@ -81,9 +97,14 @@ function openModal(title, message, colorVar) {
     successModal.style.display = "flex";
 }
 
-function closeSuccessModal() {
+function closeSuccessModal(isManual = false) {
+    if (isManual && currentModalUser) {
+        acknowledgedUsers.set(currentModalUser, 0); // Start tracking absence for this user
+    }
     successModal.style.display = "none";
     isSuccessModalOpen = false;
+    currentModalUser = null;
+    framesWithoutUser = 0;
 }
 
 // Make globally valid for the onclick in HTML
@@ -145,8 +166,8 @@ function drawRecognitionBoxes(matches) {
         // const similarity = match.similarity; // Unused for display but available
 
         // Trigger Modal if newly marked
-        if (match.newly_marked && !isSuccessModalOpen) {
-            openModal("Marked!", name, "var(--success)");
+        if (match.newly_marked) {
+            openModal("Marked!", name, "var(--success)", name);
         }
 
         // Transform coordinates to display space
@@ -184,8 +205,8 @@ function drawRecognitionBoxes(matches) {
 
 function startRecognitionLoop() {
     setInterval(async () => {
-        // Skip if busy or modal is blocking view
-        if (isProcessingFrame || isSuccessModalOpen) return;
+        // Skip if busy
+        if (isProcessingFrame) return;
         isProcessingFrame = true;
 
         try {
@@ -227,7 +248,15 @@ function startRecognitionLoop() {
 
                 // Check for specific "Already marked" error to show modal
                 if (data.attendance_error.includes("already marked")) {
-                    openModal("Notice", "Already marked present today.", "#FFD700"); // Gold/Yellow
+                    // Try to identify the user who is already marked to track them
+                    // We assume the first detected known user is the one triggered this
+                    let likelyUser = null;
+                    if (data.matches && data.matches.length > 0) {
+                        const known = data.matches.find(m => m.name !== "Unknown" && !m.name.startsWith("Unknown"));
+                        if (known) likelyUser = known.name;
+                    }
+
+                    openModal("Notice", "Already marked present today.", "#FFD700", likelyUser); // Gold/Yellow
                     // Or use a hex that matches a warning style. 
                 }
             } else {
@@ -244,6 +273,56 @@ function startRecognitionLoop() {
                     };
                 });
                 drawRecognitionBoxes(matches);
+
+                // --- Auto Disappear Logic ---
+                if (isSuccessModalOpen && currentModalUser) {
+                    // Check if currentModalUser is still in frame (matches)
+                    const isUserPresent = matches.some(m => m.name === currentModalUser);
+
+                    if (isUserPresent) {
+                        framesWithoutUser = 0; // Reset counter if seen
+                    } else {
+                        framesWithoutUser++;
+                        // If user is missing for too many consecutive frames, close modal
+                        if (framesWithoutUser > MAX_MISSING_FRAMES) {
+                            closeSuccessModal(false); // Auto-close is NOT manual
+                        }
+                    }
+                }
+
+                // --- Acknowledged User Cleanup Logic ---
+                // For anyone in the acknowledged Set, if they are NOT in matches, increment their missing count.
+                // If missing count > MAX, remove them (so they can be warned again if they return).
+                acknowledgedUsers.forEach((missingCount, user) => {
+                    const isUserPresent = matches.some(m => m.name === user);
+                    if (isUserPresent) {
+                        acknowledgedUsers.set(user, 0); // Reset if seen
+                    } else {
+                        const newCount = missingCount + 1;
+                        if (newCount > MAX_MISSING_FRAMES) {
+                            acknowledgedUsers.delete(user);
+                        } else {
+                            acknowledgedUsers.set(user, newCount);
+                        }
+                    }
+                });
+
+            } else if (isSuccessModalOpen && currentModalUser) {
+                // No matches found at all (or success=false), but modal is open with a user
+                framesWithoutUser++;
+                if (framesWithoutUser > MAX_MISSING_FRAMES) {
+                    closeSuccessModal(false);
+                }
+
+                // Also increment for all acknowledged users since no one is matched
+                acknowledgedUsers.forEach((missingCount, user) => {
+                    const newCount = missingCount + 1;
+                    if (newCount > MAX_MISSING_FRAMES) {
+                        acknowledgedUsers.delete(user);
+                    } else {
+                        acknowledgedUsers.set(user, newCount);
+                    }
+                });
             }
 
         } catch (err) {
