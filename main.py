@@ -1,7 +1,8 @@
-from utils import utils
-from register import register_student
-from recognize import recognize
 from cv2 import VideoCapture
+
+from recognize import recognize
+from register import register_student
+from utils import utils
 
 if __name__ == "__main__":
     _utils = utils()

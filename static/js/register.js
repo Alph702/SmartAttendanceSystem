@@ -1,21 +1,42 @@
-const video = document.getElementById("videoElement");
+/**
+ * register.js
+ * Handles the registration of new faces.
+ * Captures an image, sends it to the backend for encoding, and provides
+ * real-time feedback using a simplified recognition loop.
+ */
+
+const videoElement = document.getElementById("videoElement");
 const captureBtn = document.getElementById("captureBtn");
 const usernameInput = document.getElementById("username");
 const statusArea = document.getElementById("statusArea");
+
 const captureCanvas = document.getElementById("captureCanvas");
 const overlayCanvas = document.getElementById("overlayCanvas");
-const ctxCapture = captureCanvas.getContext("2d");
-const ctxOverlay = overlayCanvas.getContext("2d");
+const captureContext = captureCanvas.getContext("2d");
+const overlayContext = overlayCanvas.getContext("2d");
+
 const videoContainer = document.querySelector(".fullscreen-video-container");
 
-// Add fullscreen-mode class if mobile
+// Configuration
+const CONFIG = {
+    FEEDBACK_INTERVAL_MS: 300,
+    CAPTURE_QUALITY: 0.9,
+    FEEDBACK_QUALITY: 0.7,
+    SEND_WIDTH: 640
+};
+
+let isProcessingFeedback = false;
+
+// --- Initialization ---
+
+// Mobile responsive adjustment
 if (window.innerWidth <= 768) {
     document.body.classList.add("fullscreen-mode");
-    document.querySelector(".mobile-only").style.display = "block";
-    document.querySelector(".desktop-header").style.display = "none";
+    const mobileOnly = document.querySelector(".mobile-only");
+    const desktopHeader = document.querySelector(".desktop-header");
+    if (mobileOnly) mobileOnly.style.display = "block";
+    if (desktopHeader) desktopHeader.style.display = "none";
 }
-
-let isProcessing = false;
 
 // Start Webcam
 async function startCamera() {
@@ -27,7 +48,7 @@ async function startCamera() {
                 height: { ideal: 720 },
             },
         });
-        video.srcObject = stream;
+        videoElement.srcObject = stream;
         startFeedbackLoop();
     } catch (err) {
         console.error("Camera Error:", err);
@@ -37,39 +58,40 @@ async function startCamera() {
 
 startCamera();
 
+// --- Feedback Loop ---
+
+/**
+ * Runs a background loop to detect faces and draw bounding boxes.
+ * This helps the user position themselves correctly before capturing.
+ */
 function startFeedbackLoop() {
     setInterval(async () => {
-        if (isProcessing) return;
-        isProcessing = true;
-
-        // Sync Canvas to Container Size (works for both Desktop & Mobile)
-        const rect = videoContainer.getBoundingClientRect();
-        if (
-            overlayCanvas.width !== rect.width ||
-            overlayCanvas.height !== rect.height
-        ) {
-            overlayCanvas.width = rect.width;
-            overlayCanvas.height = rect.height;
-        }
-
-        // Capture logic
-        const sendWidth = 640;
-        const scale = sendWidth / video.videoWidth;
-        const sendHeight = video.videoHeight * scale;
-
-        captureCanvas.width = sendWidth;
-        captureCanvas.height = sendHeight;
-        ctxCapture.drawImage(
-            video,
-            0,
-            0,
-            captureCanvas.width,
-            captureCanvas.height
-        );
-
-        const imageData = captureCanvas.toDataURL("image/jpeg", 0.7);
+        if (isProcessingFeedback) return;
+        isProcessingFeedback = true;
 
         try {
+            // 1. Sync Canvas to Container Size
+            const rect = videoContainer.getBoundingClientRect();
+            if (overlayCanvas.width !== rect.width || overlayCanvas.height !== rect.height) {
+                overlayCanvas.width = rect.width;
+                overlayCanvas.height = rect.height;
+            }
+
+            // 2. Capture Frame for Detection
+            const scale = CONFIG.SEND_WIDTH / videoElement.videoWidth;
+            const sendHeight = videoElement.videoHeight * scale;
+
+            captureCanvas.width = CONFIG.SEND_WIDTH;
+            captureCanvas.height = sendHeight;
+
+            if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
+                captureContext.drawImage(videoElement, 0, 0, captureCanvas.width, captureCanvas.height);
+            } else {
+                return;
+            }
+
+            const imageData = captureCanvas.toDataURL("image/jpeg", CONFIG.FEEDBACK_QUALITY);
+
             const response = await fetch("/api/recognize", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -84,25 +106,23 @@ function startFeedbackLoop() {
                         box: m.box.map((coord) => coord / scale),
                     };
                 });
-                drawBoxes(matches);
+                drawFeedbackBoxes(matches);
             }
         } catch (err) {
-            // Ignore
+            // Silently fail for feedback loop to avoid spamming console
         } finally {
-            isProcessing = false;
+            isProcessingFeedback = false;
         }
-    }, 300);
+    }, CONFIG.FEEDBACK_INTERVAL_MS);
 }
 
-function drawBoxes(matches) {
-    ctxOverlay.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+function drawFeedbackBoxes(matches) {
+    overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-    // Determine Fit Mode: Mobile = Cover, Desktop = Contain
-    // We can check the computed style or logic
     const isMobile = window.innerWidth <= 768;
     const fitMode = isMobile ? "cover" : "contain";
 
-    const videoRatio = video.videoWidth / video.videoHeight;
+    const videoRatio = videoElement.videoWidth / videoElement.videoHeight;
     const containerRatio = overlayCanvas.width / overlayCanvas.height;
 
     let drawWidth, drawHeight, startX, startY;
@@ -134,7 +154,7 @@ function drawBoxes(matches) {
         }
     }
 
-    const displayScale = drawWidth / video.videoWidth;
+    const displayScale = drawWidth / videoElement.videoWidth;
 
     matches.forEach((match) => {
         const [x1, y1, x2, y2] = match.box;
@@ -144,12 +164,14 @@ function drawBoxes(matches) {
         const dw = (x2 - x1) * displayScale;
         const dh = (y2 - y1) * displayScale;
 
-        ctxOverlay.strokeStyle = "#00FF00";
-        ctxOverlay.lineWidth = 4;
-        ctxOverlay.lineJoin = "round";
-        ctxOverlay.strokeRect(dx, dy, dw, dh);
+        overlayContext.strokeStyle = "var(--success)"; // Green for feedback
+        overlayContext.lineWidth = 4;
+        overlayContext.lineJoin = "round";
+        overlayContext.strokeRect(dx, dy, dw, dh);
     });
 }
+
+// --- Capture Handler ---
 
 captureBtn.addEventListener("click", async () => {
     const name = usernameInput.value.trim();
@@ -161,16 +183,12 @@ captureBtn.addEventListener("click", async () => {
     captureBtn.disabled = true;
     captureBtn.innerText = "Processing...";
 
-    captureCanvas.width = video.videoWidth;
-    captureCanvas.height = video.videoHeight;
-    ctxCapture.drawImage(
-        video,
-        0,
-        0,
-        captureCanvas.width,
-        captureCanvas.height
-    );
-    const imageData = captureCanvas.toDataURL("image/jpeg", 0.9);
+    // Capture full resolution for registration
+    captureCanvas.width = videoElement.videoWidth;
+    captureCanvas.height = videoElement.videoHeight;
+    captureContext.drawImage(videoElement, 0, 0, captureCanvas.width, captureCanvas.height);
+
+    const imageData = captureCanvas.toDataURL("image/jpeg", CONFIG.CAPTURE_QUALITY);
 
     try {
         const response = await fetch("/api/register_capture", {
@@ -197,7 +215,6 @@ captureBtn.addEventListener("click", async () => {
 
 // Handle Resize
 window.addEventListener("resize", () => {
-    // Just reload layout logic next frame
     if (window.innerWidth <= 768) {
         document.body.classList.add("fullscreen-mode");
     } else {

@@ -1,6 +1,8 @@
 # register.py
 import cv2
+
 from utils import utils
+
 
 def register_student(name, utils: utils, vc: cv2.VideoCapture):
     vc = vc

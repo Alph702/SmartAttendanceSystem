@@ -1,9 +1,11 @@
 # recognize.py
-import cv2
 import csv
 import datetime
 import time
+
+import cv2
 import numpy as np
+
 from utils import utils
 
 ATTENDANCE_CSV = "attendance.csv"

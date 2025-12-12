@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Documentation - Smart Attendance System</title>
+    <!-- Fonts -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Inherit Main Styles -->
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <!-- Docs Specific Styles -->
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/docs.css') }}"
+    />
+  </head>
+  <body>
+    <!-- Navbar -->
+    <nav class="navbar">
+      <a href="/" class="nav-brand"> ⚡ SmartAttendance </a>
+      <div class="nav-links">
+        <a href="/" class="nav-link">Home</a>
+        <a href="/register" class="nav-link">Register</a>
+        <a href="/recognize" class="nav-link">Attendance</a>
+        <a href="/docs" class="nav-link active">Docs</a>
+      </div>
+    </nav>
+
+    <div class="docs-wrapper">
+      <!-- Sidebar -->
+      <aside class="docs-sidebar">
+        <div class="nav-group">
+          <h4>Getting Started</h4>
+          <a href="#overview" class="docs-ctx-link">Overview</a>
+          <a href="#installation" class="docs-ctx-link">Installation</a>
+          <a href="#features" class="docs-ctx-link">Features</a>
+        </div>
+        <div class="nav-group">
+          <h4>API Reference</h4>
+          <a href="#api-register" class="docs-ctx-link"
+            >/api/register_capture</a
+          >
+          <a href="#api-recognize" class="docs-ctx-link">/api/recognize</a>
+        </div>
+        <div class="nav-group">
+          <h4>Architecture</h4>
+          <a href="#system-design" class="docs-ctx-link">System Design</a>
+        </div>
+      </aside>
+
+      <!-- Content -->
+      <main class="docs-content">
+        <section id="overview">
+          <h1>Smart Attendance System</h1>
+          <p>
+            A high-performance, real-time face recognition based attendance
+            system. Built with <strong>Flask</strong>, <strong>OpenCV</strong>,
+            and <strong>Mediapipe</strong>.
+          </p>
+          <div class="glass-panel" style="padding: 1.5rem; margin-top: 1rem">
+            <h3>🚀 Key Capabilities</h3>
+            <ul>
+              <li>Real-time face detection & recognition (0.2s latency).</li>
+              <li>Responsive Web UI (Mobile & Desktop).</li>
+              <li>Automated attendance marking to CSV.</li>
+              <li>Robust Liveness Checks (Basic).</li>
+            </ul>
+          </div>
+        </section>
+
+        <section id="installation">
+          <h2>Installation</h2>
+          <p>We use <strong>uv</strong> for fast package management.</p>
+          <pre><code># Install dependencies
+uv sync
+
+# Run the application
+python app.py</code></pre>
+        </section>
+
+        <section id="api-register">
+          <h2>API: Register Capture</h2>
+          <p>Registers a new user into the system.</p>
+
+          <h3>Endpoint</h3>
+          <code>POST /api/register_capture</code>
+
+          <h3>Request Body</h3>
+          <pre>
+{
+  "name": "John Doe",
+  "image": "data:image/jpeg;base64,..."
+}</pre
+          >
+
+          <h3>Response</h3>
+          <pre>
+{
+  "success": true,
+  "message": "Successfully registered John Doe!"
+}</pre
+          >
+        </section>
+
+        <section id="api-recognize">
+          <h2>API: Recognize</h2>
+          <p>
+            Processes a video frame to find known faces and mark attendance.
+          </p>
+
+          <h3>Endpoint</h3>
+          <code>POST /api/recognize</code>
+
+          <h3>Request Body</h3>
+          <pre>
+{
+  "image": "data:image/jpeg;base64,..."
+}</pre
+          >
+
+          <h3>Response</h3>
+          <pre>
+{
+  "success": true,
+  "matches": [
+    {
+      "name": "John Doe",
+      "box": [100, 100, 200, 200],
+      "similarity": 0.85,
+      "newly_marked": true
+    }
+  ]
+}</pre
+          >
+        </section>
+
+        <section id="system-design">
+          <h2>System Design</h2>
+          <p>The system uses a <strong>client-server</strong> architecture.</p>
+          <ul>
+            <li>
+              <strong>Frontend:</strong> Vanilla JS captures frames from the
+              webcam and sends them to the backend via Fetch API.
+            </li>
+            <li>
+              <strong>Backend:</strong> Flask server processes images using ONNX
+              Runtime (ArcFace) for embedding extraction.
+            </li>
+            <li>
+              <strong>Storage:</strong> Encodings are stored as
+              <code>.npy</code> files; attendance is logged to
+              <code>attendance.csv</code>.
+            </li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <!-- Scroll Spy / Simple Nav Script -->
+    <script>
+      document.querySelectorAll(".docs-ctx-link").forEach((anchor) => {
+        anchor.addEventListener("click", function (e) {
+          e.preventDefault();
+          document.querySelector(this.getAttribute("href")).scrollIntoView({
+            behavior: "smooth",
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

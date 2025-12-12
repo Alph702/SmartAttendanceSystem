@@ -1,40 +1,65 @@
 """
 utils.py
-- SCRFD ONNX detection (fallback to Mediapipe detection if SCRFD not found)
-- Mediapipe Face Mesh for landmarks-based alignment
-- ONNX runtime for embeddings (Mobile-ArcFace / MobileFaceNet)
-- simple save/load encodings (one .npy per user)
+- SCRFD ONNX detection (fallback to Mediapipe detection if SCRFD not found).
+- Mediapipe Face Mesh for landmarks-based alignment.
+- ONNX runtime for embeddings (Mobile-ArcFace / MobileFaceNet).
+- Validates inputs and handles image preprocessing.
 """
 
+import math
 import os
+from typing import List, Optional, Tuple
+
 import cv2
+import mediapipe as mp
 import numpy as np
 import onnxruntime as ort
-import mediapipe as mp
-import math
-from typing import List, Optional, Tuple, Any
 
-class utils:
-    def __init__(self, EMB_MODEL_PATH: str = "models/arcface_mobile.onnx", ENC_DIR: str = "encodings") -> None:
-        self.EMB_MODEL_PATH = EMB_MODEL_PATH
-        self.ENC_DIR = ENC_DIR
+
+class FaceRecognitionUtils:
+    """
+    Utilities for face detection, alignment, and embedding extraction using
+    Mediapipe and ONNX Runtime.
+    """
+    
+    def __init__(self, emb_model_path: str = "models/arcface_mobile.onnx", enc_dir: str = "encodings") -> None:
+        """
+        Initialize the FaceRecognitionUtils with model paths and directories.
+        
+        Args:
+            emb_model_path (str): Path to the ONNX embedding model.
+            enc_dir (str): Directory to store/load face encodings.
+        """
+        self.EMB_MODEL_PATH = emb_model_path
+        self.ENC_DIR = enc_dir
         self.mp_face_mesh = mp.solutions.face_mesh
-        self.FACE_MESH = self.mp_face_mesh.FaceMesh(static_image_mode=False,
-                                 max_num_faces=4,
-                                 refine_landmarks=True,
-                                 min_detection_confidence=0.5,
-                                 min_tracking_confidence=0.5)
-        if not os.path.exists(EMB_MODEL_PATH):
-            raise FileNotFoundError(f"Place embedding ONNX at: {EMB_MODEL_PATH}")
-        self.emb_sess = ort.InferenceSession(EMB_MODEL_PATH, providers=["CPUExecutionProvider"])
+        self.face_mesh = self.mp_face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=4,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+        
+        if not os.path.exists(emb_model_path):
+            raise FileNotFoundError(f"Place embedding ONNX at: {emb_model_path}")
+            
+        # Initialize ONNX Runtime Session
+        self.emb_sess = ort.InferenceSession(emb_model_path, providers=["CPUExecutionProvider"])
         self._emb_input_name = self.emb_sess.get_inputs()[0].name
 
-    def detect_with_mediapipe(self, img_bgr: np.ndarray) -> List[Any]:
+    def detect_with_mediapipe(self, img_bgr: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
         Fast Mediapipe detection fallback. Returns boxes in pixel coords.
+
+        Args:
+            img_bgr (np.ndarray): Input image in BGR format.
+
+        Returns:
+            List[Tuple[int, int, int, int]]: List of bounding boxes (xmin, ymin, xmax, ymax).
         """
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        results = self.FACE_MESH.process(img_rgb)
+        results = self.face_mesh.process(img_rgb)
         h, w = img_bgr.shape[:2]
         boxes = []
         if results.multi_face_landmarks:
@@ -48,129 +73,226 @@ class utils:
                 boxes.append((xmin, ymin, xmax, ymax))
         return boxes
     
-    def get_face_landmarks_mediapipe(self, img_bgr: np.ndarray, box: Tuple[int,int,int,int]) -> Optional[List[Tuple[int, int]]]:
+    def get_face_landmarks_mediapipe(
+        self, img_bgr: np.ndarray, box: Tuple[int, int, int, int]
+    ) -> Optional[List[Tuple[int, int]]]:
         """
         Use Mediapipe Face Mesh to get landmarks for alignment.
-        Returns the landmarks list (x,y) in pixel coords for the face closest to box.
+        
+        Args:
+            img_bgr (np.ndarray): Input image in BGR format.
+            box (Tuple[int, int, int, int]): Bounding box of the face (xmin, ymin, xmax, ymax).
+
+        Returns:
+            Optional[List[Tuple[int, int]]]: List of (x, y) landmarks for the face closest to the box center.
         """
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        results = self.FACE_MESH.process(img_rgb)
+        results = self.face_mesh.process(img_rgb)
         if not results.multi_face_landmarks:
             return None
+            
         h, w = img_bgr.shape[:2]
         bx_cx = (box[0] + box[2]) / 2.0
         bx_cy = (box[1] + box[3]) / 2.0
-        # choose the face whose bbox center is nearest to provided box center
-        best = None
+        
+        # Choose the face whose bbox center is nearest to provided box center
+        best_landmarks = None
         best_dist = 1e9
+        
         for lm in results.multi_face_landmarks:
             xs = [p.x * w for p in lm.landmark]
             ys = [p.y * h for p in lm.landmark]
             cx = np.mean(xs)
             cy = np.mean(ys)
             dist = (cx - bx_cx)**2 + (cy - bx_cy)**2
+            
             if dist < best_dist:
                 best_dist = dist
-                best = lm
-        if best is None:
+                best_landmarks = lm
+                
+        if best_landmarks is None:
             return None
-        # return a list of (x,y) for the landmarks
-        lms = [(int(p.x * w), int(p.y * h)) for p in best.landmark]
+            
+        # Return a list of (x,y) for the landmarks
+        lms = [(int(p.x * w), int(p.y * h)) for p in best_landmarks.landmark]
         return lms
     
-    def align_face_by_eyes(self, img_rgb: np.ndarray, landmarks: List[Tuple[int,int]], output_size=112, margin=0.25):
+    def align_face_by_eyes(
+        self, img_rgb: np.ndarray, landmarks: List[Tuple[int, int]], output_size: int = 112
+    ) -> np.ndarray:
         """
         Simple similarity transform aligner using eye centers.
-        landmarks: mediapipe 468 points; left eye approx indices and right eye indices are used.
-        Returns a square aligned crop (RGB uint8) sized output_size.
+
+        Args:
+            img_rgb (np.ndarray): Input image in RGB format.
+            landmarks (List[Tuple[int, int]]): List of landmarks.
+            output_size (int): Size of the output aligned face image.
+
+        Returns:
+            np.ndarray: Aligned face crop (RGB uint8).
         """
         # Mediapipe landmarks: left eye approx indexes (33..133 region) and right eye indexes (263..362)
         left_eye_idx = [33, 133, 160, 159, 158, 157, 173]
         right_eye_idx = [263, 362, 387, 386, 385, 384, 398]
-        # compute eye centers
+        
+        # Compute eye centers
         lx = np.mean([landmarks[i][0] for i in left_eye_idx])
         ly = np.mean([landmarks[i][1] for i in left_eye_idx])
         rx = np.mean([landmarks[i][0] for i in right_eye_idx])
         ry = np.mean([landmarks[i][1] for i in right_eye_idx])
-        # desired positions
-        eye_mid = ((lx+rx)/2.0, (ly+ry)/2.0)
-        # calculate angle
+        
+        # Desired positions
+        eye_mid = ((lx + rx) / 2.0, (ly + ry) / 2.0)
+        
+        # Calculate angle
         dy = ry - ly
         dx = rx - lx
         angle = math.degrees(math.atan2(dy, dx))
-        # scale: distance between eyes in pixels
+        
+        # Scale: distance between eyes in pixels
         dist = math.hypot(dx, dy)
-        # desired distance between eyes in output
+        
+        # Desired distance between eyes in output
         desired_eye_dist = output_size * 0.35
         scale = desired_eye_dist / (dist + 1e-6)
-        # get rotation matrix around eye_mid
+        
+        # Get rotation matrix around eye_mid
         M = cv2.getRotationMatrix2D(eye_mid, angle, scale)
-        # translate so eye_mid maps to center
+        
+        # Translate so eye_mid maps to center
         t_x = output_size * 0.5
         t_y = output_size * 0.4
-        M[0,2] += (t_x - eye_mid[0])
-        M[1,2] += (t_y - eye_mid[1])
-        aligned = cv2.warpAffine(img_rgb, M, (output_size, output_size), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+        M[0, 2] += (t_x - eye_mid[0])
+        M[1, 2] += (t_y - eye_mid[1])
+        
+        aligned = cv2.warpAffine(
+            img_rgb, M, (output_size, output_size),
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT
+        )
         return aligned
 
-    def preprocess_for_model(self, face_rgb: np.ndarray, size=112):
+    def preprocess_for_model(self, face_rgb: np.ndarray, size: int = 112) -> np.ndarray:
         """
-        face_rgb: uint8 HxWx3 RGB crop already aligned/resized
-        returns: float32 NCHW tensor normalized to [0,1]
+        Normalize and reshape face image for the model.
+
+        Args:
+            face_rgb (np.ndarray): Aligned face crop in RGB.
+            size (int): Target size.
+
+        Returns:
+            np.ndarray: Preprocessed tensor (NCHW, float32, normalized to [0,1]).
         """
         img = cv2.resize(face_rgb, (size, size)).astype(np.float32) / 255.0
-        tensor = np.transpose(img, (2,0,1))[None, ...].astype(np.float32)
+        tensor = np.transpose(img, (2, 0, 1))[None, ...].astype(np.float32)
         return tensor
 
-    def get_embedding_from_face_tensor(self, tensor: np.ndarray):
+    def get_embedding_from_face_tensor(self, tensor: np.ndarray) -> np.ndarray:
+        """
+        Run inference to get face embedding.
+
+        Args:
+            tensor (np.ndarray): Preprocessed input tensor.
+
+        Returns:
+            np.ndarray: Normalized 512-d embedding vector.
+        """
         out = self.emb_sess.run(None, {self._emb_input_name: tensor})
         emb = out[0].squeeze()
+        
         # Normalize
         norm = np.linalg.norm(emb)
         if norm > 0:
             emb = emb / norm
         return emb.astype(np.float32)
     
-    def detect_faces_rgb(self, img_rgb: np.ndarray):
+    def detect_faces_rgb(self, img_rgb: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
-        Detects faces from an RGB image using mediapipe.
+        Detects faces from an RGB image using Mediapipe.
+
+        Args:
+            img_rgb (np.ndarray): Input RGB image.
+
+        Returns:
+            List[Tuple[int, int, int, int]]: List of bounding boxes.
         """
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
         return self.detect_with_mediapipe(img_bgr)
     
-    def preprocess_face(self, img_rgb: np.ndarray, box: Tuple[int,int,int,int], size=112):
+    def preprocess_face(
+        self, img_rgb: np.ndarray, box: Tuple[int, int, int, int], size: int = 112
+    ) -> Optional[np.ndarray]:
         """
         Full pipeline from RGB image and a bounding box to a preprocessed face tensor.
+        
+        Args:
+            img_rgb (np.ndarray): Input RGB image.
+            box (Tuple[int, int, int, int]): Bounding box.
+            size (int): Target size.
+
+        Returns:
+            Optional[np.ndarray]: Face tensor or None if alignment fails.
         """
         # Mediapipe needs BGR
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
         landmarks = self.get_face_landmarks_mediapipe(img_bgr, box)
         if landmarks is None:
-            return None  # Or handle error appropriately
+            return None
         
         aligned_rgb = self.align_face_by_eyes(img_rgb, landmarks, output_size=size)
-        
         tensor = self.preprocess_for_model(aligned_rgb, size=size)
         return tensor
     
     def save_encoding(self, name: str, emb: np.ndarray) -> None:
-        path = os.path.join(self.ENC_DIR, f"{name}.npy")
-        np.save(path, emb)
-        print("Saved encoding:", path)
+        """
+        Save the face encoding to disk.
 
-    def load_all_encodings(self):
+        Args:
+            name (str): Person's name.
+            emb (np.ndarray): Embedding vector.
+        """
+        filename = f"{name}.npy"
+        # Sanitize filename
+        safe_name = "".join([c for c in filename if c.isalpha() or c.isdigit() or c in (' ', '.', '_', '-')]).strip()
+        path = os.path.join(self.ENC_DIR, safe_name)
+        
+        np.save(path, emb)
+        print(f"Saved encoding for {name} at {path}")
+
+    def load_all_encodings(self) -> dict:
+        """
+        Load all face encodings from the directory.
+
+        Returns:
+            dict: Dictionary mapping names to embedding vectors.
+        """
         enc = {}
+        if not os.path.exists(self.ENC_DIR):
+            os.makedirs(self.ENC_DIR, exist_ok=True)
+            
         for fn in os.listdir(self.ENC_DIR):
             if fn.endswith(".npy"):
                 name = os.path.splitext(fn)[0]
-                emb = np.load(os.path.join(self.ENC_DIR, fn))
-                enc[name] = emb
+                try:
+                    emb = np.load(os.path.join(self.ENC_DIR, fn))
+                    enc[name] = emb
+                except Exception as e:
+                    print(f"Error loading {fn}: {e}")
         return enc
 
-    def _resize_max_side(self, img, max_side=1280):
+    def resize_image_if_large(self, img: np.ndarray, max_side: int = 1280) -> Tuple[np.ndarray, float]:
+        """
+        Resize image if its largest side exceeds max_side.
+
+        Args:
+            img (np.ndarray): Input image.
+            max_side (int): Maximum allowed side length.
+
+        Returns:
+            Tuple[np.ndarray, float]: Resized image and the scale factor used.
+        """
         h, w = img.shape[:2]
         scale = 1.0
         if max(h, w) > max_side:
             scale = max_side / max(h, w)
-            img = cv2.resize(img, (int(w*scale), int(h*scale)))
+            img = cv2.resize(img, (int(w * scale), int(h * scale)))
         return img, scale
