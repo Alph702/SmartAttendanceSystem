@@ -22,16 +22,14 @@ class FaceRecognitionUtils:
     Mediapipe and ONNX Runtime.
     """
     
-    def __init__(self, emb_model_path: str = "models/arcface_mobile.onnx", enc_dir: str = "encodings") -> None:
+    def __init__(self, emb_model_path: str = "models/arcface_mobile.onnx") -> None:
         """
-        Initialize the FaceRecognitionUtils with model paths and directories.
+        Initialize the FaceRecognitionUtils with model paths.
         
         Args:
             emb_model_path (str): Path to the ONNX embedding model.
-            enc_dir (str): Directory to store/load face encodings.
         """
         self.EMB_MODEL_PATH = emb_model_path
-        self.ENC_DIR = enc_dir
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             static_image_mode=False,
@@ -242,42 +240,7 @@ class FaceRecognitionUtils:
         tensor = self.preprocess_for_model(aligned_rgb, size=size)
         return tensor
     
-    def save_encoding(self, name: str, emb: np.ndarray) -> None:
-        """
-        Save the face encoding to disk.
 
-        Args:
-            name (str): Person's name.
-            emb (np.ndarray): Embedding vector.
-        """
-        filename = f"{name}.npy"
-        # Sanitize filename
-        safe_name = "".join([c for c in filename if c.isalpha() or c.isdigit() or c in (' ', '.', '_', '-')]).strip()
-        path = os.path.join(self.ENC_DIR, safe_name)
-        
-        np.save(path, emb)
-        print(f"Saved encoding for {name} at {path}")
-
-    def load_all_encodings(self) -> dict:
-        """
-        Load all face encodings from the directory.
-
-        Returns:
-            dict: Dictionary mapping names to embedding vectors.
-        """
-        enc = {}
-        if not os.path.exists(self.ENC_DIR):
-            os.makedirs(self.ENC_DIR, exist_ok=True)
-            
-        for fn in os.listdir(self.ENC_DIR):
-            if fn.endswith(".npy"):
-                name = os.path.splitext(fn)[0]
-                try:
-                    emb = np.load(os.path.join(self.ENC_DIR, fn))
-                    enc[name] = emb
-                except Exception as e:
-                    print(f"Error loading {fn}: {e}")
-        return enc
 
     def resize_image_if_large(self, img: np.ndarray, max_side: int = 1280) -> Tuple[np.ndarray, float]:
         """

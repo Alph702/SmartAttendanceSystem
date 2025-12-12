@@ -12,7 +12,11 @@ const captureContext = captureCanvas.getContext("2d");
 
 const statusLabel = document.getElementById("systemStatus");
 const successModal = document.getElementById("successModal");
-const modalNameElement = document.getElementById("modalName");
+const modalPanel = document.getElementById("modalPanel");
+const modalIcon = document.getElementById("modalIcon");
+const modalTitle = document.getElementById("modalTitle");
+const modalMessage = document.getElementById("modalMessage");
+const modalButton = document.getElementById("modalButton");
 const videoContainer = document.querySelector(".fullscreen-video-container");
 
 // Configuration
@@ -59,9 +63,21 @@ startCamera();
 
 // --- UI Helpers ---
 
-function openSuccessModal(name) {
+function openModal(title, message, colorVar) {
     isSuccessModalOpen = true;
-    modalNameElement.innerText = name;
+
+    // Update Content
+    modalTitle.innerText = title;
+    modalMessage.innerText = message;
+
+    // Update Colors
+    // colorVar should be like "var(--success)" or "var(--warning)" or hex
+    modalPanel.style.borderColor = colorVar;
+    modalPanel.style.boxShadow = `0 0 50px ${colorVar === 'var(--success)' ? 'rgba(0, 255, 127, 0.2)' : 'rgba(255, 165, 0, 0.2)'}`; // Approximate
+    modalIcon.style.backgroundColor = colorVar;
+    modalTitle.style.color = colorVar;
+    modalButton.style.backgroundColor = colorVar;
+
     successModal.style.display = "flex";
 }
 
@@ -130,7 +146,7 @@ function drawRecognitionBoxes(matches) {
 
         // Trigger Modal if newly marked
         if (match.newly_marked && !isSuccessModalOpen) {
-            openSuccessModal(name);
+            openModal("Marked!", name, "var(--success)");
         }
 
         // Transform coordinates to display space
@@ -207,7 +223,13 @@ function startRecognitionLoop() {
             // 4. Update UI based on response
             if (data.attendance_error) {
                 statusLabel.innerText = `● ${data.attendance_error}`;
-                statusLabel.style.color = "var(--danger)";
+                statusLabel.style.color = "var(--primary)"; // Info style
+
+                // Check for specific "Already marked" error to show modal
+                if (data.attendance_error.includes("already marked")) {
+                    openModal("Notice", "Already marked present today.", "#FFD700"); // Gold/Yellow
+                    // Or use a hex that matches a warning style. 
+                }
             } else {
                 statusLabel.innerText = "● System Active";
                 statusLabel.style.color = "var(--success)";

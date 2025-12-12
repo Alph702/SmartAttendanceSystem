@@ -13,14 +13,20 @@ import time
 import cv2
 import numpy as np
 from flask import Flask, jsonify, render_template, request
+from pydantic import ValidationError
 
 from utils import FaceRecognitionUtils
+from models import db, User, Attendance
+from schemas import RegisterRequest, RecognizeRequest, RecognizeResponse, AttendanceMatch
 
 # --- Configuration & Global State ---
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///attendance.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db.init_app(app)
 
 # Initialize utilities (loads ONNX models)
-# Ensure models folder exists or handle error gracefully
 try:
     face_utils = FaceRecognitionUtils()
 except Exception as e:
@@ -28,54 +34,119 @@ except Exception as e:
     face_utils = None
 
 # Recognition State
+# known_face_encodings and last_seen_timestamps are now managed via DB and in-memory cache for speed if needed
+# For simplicity, we will query DB or load DB into memory. 
+# To keep performance high, let's load encodings from DB into memory on startup/reload.
 known_face_encodings = {}
 last_seen_timestamps = {}  # {name: timestamp}
-ATTENDANCE_CSV_FILE = "attendance.csv"
 RECOGNITION_THRESHOLD = 0.5
 ATTENDANCE_COOLDOWN_SECONDS = 60
 
 def load_face_encodings():
     """
-    Loads all face encodings from the encodings directory into memory.
+    Loads all face encodings from the database into memory.
     """
     global known_face_encodings
-    if face_utils:
-        try:
-            known_face_encodings = face_utils.load_all_encodings()
-            print(f"[System] Loaded {len(known_face_encodings)} encodings.")
-        except Exception as e:
-            print(f"[Error] Loading encodings: {e}")
-            known_face_encodings = {}
+    try:
+        with app.app_context():
+            users = User.query.all()
+            known_face_encodings = {u.name: u.get_encoding() for u in users}
+            print(f"[System] Loaded {len(known_face_encodings)} encodings from DB.")
+    except Exception as e:
+        print(f"[Error] Loading encodings from DB: {e}")
+        known_face_encodings = {}
 
-# Initial load
+def migrate_legacy_data():
+    """Migrate existing .npy and .csv data to SQLite."""
+    with app.app_context():
+        db.create_all()
+        if User.query.first() is None:
+            print("[Migration] No users found in DB. Checking for legacy files...")
+            
+            # 1. Migrate Encodings
+            enc_dir = "encodings"
+            if os.path.exists(enc_dir):
+                count = 0
+                for fn in os.listdir(enc_dir):
+                    if fn.endswith(".npy"):
+                        name = os.path.splitext(fn)[0]
+                        try:
+                            path = os.path.join(enc_dir, fn)
+                            emb = np.load(path)
+                            user = User(name=name)
+                            user.set_encoding(emb)
+                            db.session.add(user)
+                            count += 1
+                        except Exception as e:
+                            print(f"[Migration] Error migrating {fn}: {e}")
+                db.session.commit()
+                print(f"[Migration] Migrated {count} users.")
+            
+            # 2. Migrate Attendance (Simple approach: just insert valid rows)
+            # Note: This might duplicate if we run it multiple times without checks, but we checked User.query.first()
+            csv_file = "attendance.csv"
+            if os.path.exists(csv_file):
+                print("[Migration] Migrating attendance.csv...")
+                rows_added = 0
+                load_face_encodings() # Ensure we have users loaded or query them
+                
+                # Pre-fetch user map {name: user_id}
+                users_map = {u.name: u.id for u in User.query.all()}
+                
+                try:
+                    with open(csv_file, "r") as f:
+                        reader = csv.reader(f)
+                        for row in reader:
+                            if len(row) >= 2:
+                                name, ts_str = row[0], row[1]
+                                if name in users_map:
+                                    try:
+                                        # Attempt to parse ISO format
+                                        ts = datetime.datetime.fromisoformat(ts_str)
+                                        att = Attendance(user_id=users_map[name], timestamp=ts)
+                                        db.session.add(att)
+                                        rows_added += 1
+                                    except ValueError:
+                                        pass # Ignore invalid dates
+                    db.session.commit()
+                    print(f"[Migration] Migrated {rows_added} attendance records.")
+                except Exception as e:
+                    print(f"[Migration] Error reading CSV: {e}")
+
+# Initial load & Migration
+migrate_legacy_data()
 load_face_encodings()
 
 # --- Helper Functions ---
 
 def mark_attendance(name: str) -> tuple[bool, str]:
     """
-    Marks attendance for a user in the CSV file with the current UTC timestamp.
-    
-    Args:
-        name (str): The name of the person.
-
-    Returns:
-        tuple[bool, str]: (Success status, Message).
+    Marks attendance for a user in the Database.
     """
     try:
-        # Check if we can write to file
-        with open(ATTENDANCE_CSV_FILE, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([name, datetime.datetime.utcnow().isoformat()])
-        print(f"[Attendance] Marked for {name}")
+        user = User.query.filter_by(name=name).first()
+        if not user:
+            return False, "User not found in DB."
+            
+        # Check if already present today
+        today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        existing_attendance = Attendance.query.filter(
+            Attendance.user_id == user.id,
+            Attendance.timestamp >= today_start
+        ).first()
+
+        if existing_attendance:
+            return False, "You are already marked present today."
+
+        new_att = Attendance(user_id=user.id)
+        db.session.add(new_att)
+        db.session.commit()
+        print(f"[Attendance] Marked for {name} in DB")
         return True, "Success"
-    except PermissionError:
-        print(f"[Error] Permission denied for {ATTENDANCE_CSV_FILE}. Is it open?")
-        return False, "File access error. Close CSV if open."
     except Exception as e:
+        db.session.rollback()
         print(f"[Error] Marking attendance: {e}")
-        # Return a user-friendly error if possible, or just the string
-        return False, "Internal Error"
+        return False, "Database Error"
 
 def decode_base64_to_image(data_url: str) -> np.ndarray:
     """
@@ -131,18 +202,19 @@ def docs_page():
 def api_register_capture():
     """
     API call to register a new face from a captured image.
-    Expects JSON: { "name": "...", "image": "base64..." }
+    validates with Pydantic.
     """
     if not face_utils:
         return jsonify({"success": False, "message": "Server not initialized."})
 
-    data = request.json
-    name = data.get('name')
-    image_data = data.get('image')
-    
-    if not name or not image_data:
-        return jsonify({"success": False, "message": "Name and Image are required."})
+    try:
+        req_data = RegisterRequest(**request.json)
+    except ValidationError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
 
+    name = req_data.name
+    image_data = req_data.image
+    
     frame = decode_base64_to_image(image_data)
     if frame is None:
         return jsonify({"success": False, "message": "Invalid image data."})
@@ -156,7 +228,6 @@ def api_register_capture():
         return jsonify({"success": False, "message": "No face detected. Please try again."})
 
     # Pick the largest face (Assumption: User is close to camera)
-    # bbox: [x1, y1, x2, y2] -> Area = (x2-x1)*(y2-y1)
     sorted_bboxes = sorted(face_bboxes, key=lambda b: (b[2]-b[0])*(b[3]-b[1]), reverse=True)
     target_box = sorted_bboxes[0]
     
@@ -168,32 +239,49 @@ def api_register_capture():
     # Generate Embedding
     face_embedding = face_utils.get_embedding_from_face_tensor(face_tensor)
     
-    # Save to disk
-    face_utils.save_encoding(name, face_embedding)
-    
-    # Reload to update memory
-    load_face_encodings()
-    
-    return jsonify({"success": True, "message": f"Successfully registered {name}!"})
+    # Save to DB
+    try:
+        existing = User.query.filter_by(name=name).first()
+        if existing:
+             # Update existing? or Reject? Let's update.
+             existing.set_encoding(face_embedding)
+             db.session.commit()
+             msg = f"Updated registration for {name}."
+        else:
+            new_user = User(name=name)
+            new_user.set_encoding(face_embedding)
+            db.session.add(new_user)
+            db.session.commit()
+            msg = f"Successfully registered {name}!"
+            
+        # Reload to update memory
+        load_face_encodings()
+        
+        return jsonify({"success": True, "message": msg})
+    except Exception as e:
+        db.session.rollback()
+        print(f"[Error] DB Save: {e}")
+        return jsonify({"success": False, "message": "Database error saving user."})
 
 @app.route('/api/recognize', methods=['POST'])
 def api_recognize():
     """
     API call to recognize faces in a frame and mark attendance.
-    Expects JSON: { "image": "base64..." }
+    Validates with Pydantic.
     """
     if not face_utils:
-        return jsonify({"success": False, "matches": []})
+        return jsonify(RecognizeResponse(success=False, matches=[], attendance_error="Server not initialized").model_dump())
 
-    data = request.json
-    image_data = data.get('image')
+    try:
+        req_data = RecognizeRequest(**request.json)
+    except ValidationError as e:
+        return jsonify({"success": False, "matches": [], "attendance_error": str(e)}), 400
+
+    image_data = req_data.image
     
-    if not image_data:
-        return jsonify({"success": False, "matches": []})
-
     frame = decode_base64_to_image(image_data)
     if frame is None:
-        return jsonify({"success": False, "matches": []})
+        return jsonify(RecognizeResponse(success=False, matches=[]).model_dump())
 
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     face_bboxes = face_utils.detect_faces_rgb(rgb_frame)
@@ -243,27 +331,27 @@ def api_recognize():
                         else:
                             attendance_error = msg
             
-            matches_payload.append({
-                "box": box, # [x1, y1, x2, y2]
-                "name": name,
-                "similarity": float(similarity_score),
-                "newly_marked": is_newly_marked
-            })
+            matches_payload.append(AttendanceMatch(
+                box=box, 
+                name=name, 
+                similarity=float(similarity_score), 
+                newly_marked=is_newly_marked
+            ))
     else:
         # No known encodings, but we detected faces
         for box in face_bboxes:
-            matches_payload.append({
-                "box": box,
-                "name": "Unknown (Empty DB)",
-                "similarity": 0.0,
-                "newly_marked": False
-            })
+            matches_payload.append(AttendanceMatch(
+                box=box,
+                name="Unknown (Empty DB)",
+                similarity=0.0,
+                newly_marked=False
+            ))
 
-    return jsonify({
-        "success": True, 
-        "matches": matches_payload, 
-        "attendance_error": attendance_error
-    })
+    return jsonify(RecognizeResponse(
+        success=True, 
+        matches=matches_payload, 
+        attendance_error=attendance_error
+    ).model_dump())
 
 if __name__ == "__main__":
     # Ensure encodings directory exists
