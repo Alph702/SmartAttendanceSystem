@@ -12,8 +12,13 @@ import time
 
 import cv2
 import numpy as np
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from pydantic import ValidationError
+import io
+import json
+import csv
+from openpyxl import Workbook
+from sqlalchemy import desc, extract
 
 from utils import FaceRecognitionUtils
 from models import db, User, Attendance
@@ -128,8 +133,8 @@ def mark_attendance(name: str) -> tuple[bool, str]:
         if not user:
             return False, "User not found in DB."
             
-        # Check if already present today
-        today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        # Check if already present today (UTC)
+        today_start = datetime.datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         existing_attendance = Attendance.query.filter(
             Attendance.user_id == user.id,
             Attendance.timestamp >= today_start
@@ -172,6 +177,60 @@ def decode_base64_to_image(data_url: str) -> np.ndarray:
         print(f"[Error] Decoding image: {e}")
         return None
 
+
+def build_attendance_query(request_args):
+    """
+    Helper function to build SQLAlchemy query based on request arguments.
+    Supports: date/time range, specific Y/M/D, and user_id.
+    """
+    user_id = request_args.get('user_id', type=int)
+    
+    # Advanced Date Filters
+    start_iso = request_args.get('start_iso') # ISO8601 string
+    end_iso = request_args.get('end_iso')     # ISO8601 string
+    
+    year = request_args.get('year', type=int)
+    month = request_args.get('month', type=int)
+    day = request_args.get('day', type=int)
+    
+    # Legacy/Simple Date Filter (YYYY-MM-DD)
+    date_str = request_args.get('date')
+
+    query = db.session.query(Attendance, User.name).join(User, Attendance.user_id == User.id)
+
+    if user_id:
+        query = query.filter(Attendance.user_id == user_id)
+
+    # 1. ISO Range Filter (Takes precedence or works alongside others?)
+    # Usually range is specific enough.
+    if start_iso and end_iso:
+        try:
+            start_dt = datetime.datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+            end_dt = datetime.datetime.fromisoformat(end_iso.replace('Z', '+00:00'))
+            query = query.filter(Attendance.timestamp >= start_dt, Attendance.timestamp <= end_dt)
+        except ValueError:
+            pass
+    
+    # 2. Granular Filters (Year/Month/Day)
+    # Applied if range is not fully specifying everything or used in conjunction
+    if year:
+        query = query.filter(extract('year', Attendance.timestamp) == year)
+    if month:
+        query = query.filter(extract('month', Attendance.timestamp) == month)
+    if day:
+        query = query.filter(extract('day', Attendance.timestamp) == day)
+
+    # 3. Legacy Date Filter (Fallback if no advanced filters)
+    if date_str and not (start_iso or year or month or day):
+        try:
+            date_obj = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+            next_day = date_obj + datetime.timedelta(days=1)
+            query = query.filter(Attendance.timestamp >= date_obj, Attendance.timestamp < next_day)
+        except ValueError:
+            pass
+
+    return query.order_by(desc(Attendance.timestamp))
+
 # --- Routes ---
 
 @app.route('/')
@@ -197,6 +256,117 @@ def recognize_page():
 def docs_page():
     """Renders the documentation page."""
     return render_template('docs/index.html')
+
+@app.route('/reports')
+def reports_page():
+    """Renders the reports page."""
+    users = User.query.with_entities(User.id, User.name).all()
+    return render_template('reports.html', users=users)
+
+@app.route('/api/attendance_records')
+def get_attendance_records():
+    """
+    API to fetch attendance records with optional filters.
+    Query Params:
+        user_id (int): User ID
+        start_iso (str): Start datetime ISO
+        end_iso (str): End datetime ISO
+        year, month, day (int): Granular date components
+        date (str): Simple YYYY-MM-DD (legacy/simple mode)
+    """
+    query = build_attendance_query(request.args)
+    records = query.all()
+    
+    data = [{
+        "id": att.id,
+        "name": name,
+        "timestamp": att.timestamp.isoformat(),
+        "date_str": att.timestamp.strftime("%Y-%m-%d"),
+        "time_str": att.timestamp.strftime("%H:%M:%S")
+    } for att, name in records]
+    
+    return jsonify(data)
+
+@app.route('/api/export/csv')
+def export_csv():
+    """Export attendance records to CSV."""
+    query = build_attendance_query(request.args)
+    records = query.all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Name", "Date", "Time", "Timestamp"])
+
+    for att, name in records:
+        writer.writerow([
+            att.id,
+            name,
+            att.timestamp.strftime("%Y-%m-%d"),
+            att.timestamp.strftime("%H:%M:%S"),
+            att.timestamp.isoformat()
+        ])
+    
+    output.seek(0)
+    
+    return send_file(
+        io.BytesIO(output.getvalue().encode('utf-8')),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+    )
+
+@app.route('/api/export/json')
+def export_json():
+    """Export attendance records to JSON."""
+    query = build_attendance_query(request.args)
+    records = query.all()
+
+    data = [{
+        "id": att.id,
+        "name": name,
+        "timestamp": att.timestamp.isoformat()
+    } for att, name in records]
+
+    return send_file(
+        io.BytesIO(json.dumps(data, indent=2).encode('utf-8')),
+        mimetype="application/json",
+        as_attachment=True,
+        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.json"
+    )
+
+@app.route('/api/export/excel')
+def export_excel():
+    """Export attendance records to Excel (XLSX)."""
+    query = build_attendance_query(request.args)
+    records = query.all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Attendance Report"
+    
+    # Headers
+    headers = ["ID", "Name", "Date", "Time", "Timestamp"]
+    ws.append(headers)
+
+    for att, name in records:
+        ws.append([
+            att.id,
+            name,
+            att.timestamp.strftime("%Y-%m-%d"),
+            att.timestamp.strftime("%H:%M:%S"),
+            att.timestamp.isoformat()
+        ])
+    
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return send_file(
+        output,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+    )
 
 @app.route('/api/register_capture', methods=['POST'])
 def api_register_capture():

@@ -5,6 +5,10 @@ from sqlalchemy import func
 
 db = SQLAlchemy()
 
+def utc_now():
+    """Returns current UTC time as timezone-aware datetime."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
 class User(db.Model):
     __tablename__ = 'users'
     
@@ -12,7 +16,7 @@ class User(db.Model):
     name = db.Column(db.String(100), nullable=False)
     # Storing embedding as a pickled numpy array (BLOB)
     encoding = db.Column(db.LargeBinary, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     
     # Relationship
     attendances = db.relationship('Attendance', backref='user', lazy=True)
@@ -28,4 +32,5 @@ class Attendance(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    timestamp = db.Column(db.DateTime(timezone=True), default=utc_now)
+

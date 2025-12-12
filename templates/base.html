@@ -1,72 +1,113 @@
 <!DOCTYPE html>
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>{% block title %}Smart Attendance{% endblock %}</title>
 
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>{% block title %}Smart Attendance{% endblock %}</title>
+    <!-- PWA Settings -->
+    <meta name="theme-color" content="#FFD700" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <link
+      rel="manifest"
+      href="{{ url_for('static', filename='manifest.json') }}"
+    />
 
-  <!-- PWA Settings -->
-  <meta name="theme-color" content="#FFD700" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <!-- Service Worker Registration -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("{{ url_for('static', filename='sw.js') }}")
+            .then((registration) => {
+              console.log("SW registered:", registration);
+            })
+            .catch((error) => {
+              console.log("SW registration failed:", error);
+            });
+        });
+      }
+    </script>
 
-  <!-- Service Worker Registration -->
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker
-          .register("{{ url_for('static', filename='sw.js') }}")
-          .then((registration) => {
-            console.log("SW registered:", registration);
-          })
-          .catch((error) => {
-            console.log("SW registration failed:", error);
-          });
-      });
-    }
-  </script>
+    <style>
+      /* Specific page overrides can go here */
+    </style>
+  </head>
 
-  <style>
-    /* Specific page overrides can go here */
-  </style>
-</head>
-
-<body>
-  <nav class="navbar glass-panel" style="
+  <body>
+    <nav
+      class="navbar glass-panel"
+      style="
         border-radius: 0;
         border: none;
         border-bottom: 1px solid rgba(255, 215, 0, 0.1);
-      ">
-    <a href="/" class="nav-brand">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round" stroke-linejoin="round">
-        <path d="M2 12h5" />
-        <path d="M7 12v3a4 4 0 0 0 4 4h2a4 4 0 0 0 4-4v-3" />
-        <path d="M17 12h5" />
-        <path d="M12 7V3" />
-        <path d="M12 17v4" />
-        <path d="M4 5l3 3" />
-        <path d="M20 5l-3 3" />
-        <path d="M4 19l3-3" />
-        <path d="M20 19l-3-3" />
-      </svg>
-      SmartFace
-    </a>
-    <div class="nav-links">
-      <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">Home</a>
-      <a href="/register" class="nav-link {% if request.path == '/register' %}active{% endif %}">Register</a>
-      <a href="/recognize" class="nav-link {% if request.path == '/recognize' %}active{% endif %}">Recognize</a>
-    </div>
-  </nav>
+      "
+    >
+      <a href="/" class="nav-brand">
+        <svg
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M2 12h5" />
+          <path d="M7 12v3a4 4 0 0 0 4 4h2a4 4 0 0 0 4-4v-3" />
+          <path d="M17 12h5" />
+          <path d="M12 7V3" />
+          <path d="M12 17v4" />
+          <path d="M4 5l3 3" />
+          <path d="M20 5l-3 3" />
+          <path d="M4 19l3-3" />
+          <path d="M20 19l-3-3" />
+        </svg>
+        SmartFace
+      </a>
+      <div class="nav-links">
+        <a
+          href="/"
+          class="nav-link {% if request.path == '/' %}active{% endif %}"
+          >Home</a
+        >
+        <a
+          href="/register"
+          class="nav-link {% if request.path == '/register' %}active{% endif %}"
+          >Register</a
+        >
+        <a
+          href="/recognize"
+          class="nav-link {% if request.path == '/recognize' %}active{% endif %}"
+          >Recognize</a
+        >
+        <a
+          href="/reports"
+          class="nav-link {% if request.path == '/reports' %}active{% endif %}"
+          >Reports</a
+        >
+      </div>
+    </nav>
 
-  <div class="container">{% block content %}{% endblock %}</div>
-</body>
-
+    <div class="container">{% block content %}{% endblock %}</div>
+  </body>
 </html>
