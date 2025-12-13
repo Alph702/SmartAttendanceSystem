@@ -493,4 +493,4 @@ if __name__ == "__main__":
     os.makedirs("encodings", exist_ok=True)
     # Run the app
     # Debug=True is great for development
-    app.run(host="0.0.0.0", port=5000, debug=True, threaded=False)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True, ssl_context="adhoc")
