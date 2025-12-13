@@ -241,7 +241,7 @@ function startRecognitionLoop() {
 
             const data = await response.json();
 
-            console.log(data)
+            // console.log(data)
 
             // 4. Update UI based on response
             if (data.attendance_error) {

@@ -481,7 +481,7 @@ def api_recognize():
                 debug_matches.append((m.name, m.newly_marked))
             else:
                 debug_matches.append((m.get('name'), m.get('newly_marked')))
-        print(f"[DEBUG] Recognition response - matches: {debug_matches}, attendance_error: {attendance_error}")
+        # print(f"[DEBUG] Recognition response - matches: {debug_matches}, attendance_error: {attendance_error}")
     except Exception:
         print("[DEBUG] Recognition response - unable to inspect matches payload (non-serializable types)")
 
