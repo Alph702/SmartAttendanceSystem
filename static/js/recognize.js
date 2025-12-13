@@ -165,10 +165,10 @@ function drawRecognitionBoxes(matches) {
         const name = match.name;
         // const similarity = match.similarity; // Unused for display but available
 
-        // Trigger Modal if newly marked
-        if (match.newly_marked) {
-            openModal("Marked!", name, "var(--success)", name);
-        }
+        // NOTE: Client should not be the source of truth for whether a user was
+        // "marked" — the server returns `newly_marked` in the `matches` payload
+        // and we open the modal centrally from the recognition loop to ensure
+        // consistent messaging. We no longer open the modal from here.
 
         // Transform coordinates to display space
         const dx = startX + x1 * displayScale;
@@ -262,13 +262,16 @@ function startRecognitionLoop() {
                     // Or use a hex that matches a warning style. 
                 }
             } else {
-                let likelyUser = null;
+                // Show a "Marked" modal only if the server explicitly flagged
+                // the match as newly marked (m.newly_marked === true).
+                let newlyMarked = null;
                 if (data.matches && data.matches.length > 0) {
-                    const known = data.matches.find(m => m.name !== "Unknown" && !m.name.startsWith("Unknown"));
-                    if (known) likelyUser = known.name;
+                    newlyMarked = data.matches.find(m => m.newly_marked === true);
                 }
-                if (likelyUser) {
-                    openModal("Marked!", "You are narked present today.", "var(--success)", likelyUser);
+                if (newlyMarked) {
+                    // Use a consistent user-facing message and include the name
+                    // for clarity in multi-face scenarios.
+                    openModal("Marked!", `${newlyMarked.name} is marked present today.`, "var(--success)", newlyMarked.name);
                 }
                 statusLabel.innerText = "● System Active";
                 statusLabel.style.color = "var(--success)";
