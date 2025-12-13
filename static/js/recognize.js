@@ -241,6 +241,8 @@ function startRecognitionLoop() {
 
             const data = await response.json();
 
+            console.log(data)
+
             // 4. Update UI based on response
             if (data.attendance_error) {
                 statusLabel.innerText = `● ${data.attendance_error}`;
@@ -260,6 +262,14 @@ function startRecognitionLoop() {
                     // Or use a hex that matches a warning style. 
                 }
             } else {
+                let likelyUser = null;
+                if (data.matches && data.matches.length > 0) {
+                    const known = data.matches.find(m => m.name !== "Unknown" && !m.name.startsWith("Unknown"));
+                    if (known) likelyUser = known.name;
+                }
+                if (likelyUser) {
+                    openModal("Marked!", "You are narked present today.", "var(--success)", likelyUser);
+                }
                 statusLabel.innerText = "● System Active";
                 statusLabel.style.color = "var(--success)";
             }

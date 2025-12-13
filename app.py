@@ -7,27 +7,26 @@ app.py
 import base64
 import csv
 import datetime
+import io
+import json
 import os
 import time
 
 import cv2
 import numpy as np
 from flask import Flask, jsonify, render_template, request, send_file
-from pydantic import ValidationError
-import io
-import json
-import csv
 from openpyxl import Workbook
+from pydantic import ValidationError
 from sqlalchemy import desc, extract
 
+from models import Attendance, User, db
+from schemas import AttendanceMatch, RecognizeRequest, RecognizeResponse, RegisterRequest
 from utils import FaceRecognitionUtils
-from models import db, User, Attendance
-from schemas import RegisterRequest, RecognizeRequest, RecognizeResponse, AttendanceMatch
 
 # --- Configuration & Global State ---
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///attendance.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///attendance.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
 
@@ -35,17 +34,17 @@ db.init_app(app)
 try:
     face_utils = FaceRecognitionUtils()
 except Exception as e:
-    print(f"CRITICAL: Failed to initialize FaceRecognitionUtils: {e}")
-    face_utils = None
+    raise RuntimeError(f"CRITICAL: Failed to initialize FaceRecognitionUtils: {e}")
 
 # Recognition State
 # known_face_encodings and last_seen_timestamps are now managed via DB and in-memory cache for speed if needed
-# For simplicity, we will query DB or load DB into memory. 
+# For simplicity, we will query DB or load DB into memory.
 # To keep performance high, let's load encodings from DB into memory on startup/reload.
 known_face_encodings = {}
 last_seen_timestamps = {}  # {name: timestamp}
 RECOGNITION_THRESHOLD = 0.5
 ATTENDANCE_COOLDOWN_SECONDS = 60
+
 
 def load_face_encodings():
     """
@@ -61,68 +60,11 @@ def load_face_encodings():
         print(f"[Error] Loading encodings from DB: {e}")
         known_face_encodings = {}
 
-def migrate_legacy_data():
-    """Migrate existing .npy and .csv data to SQLite."""
-    with app.app_context():
-        db.create_all()
-        if User.query.first() is None:
-            print("[Migration] No users found in DB. Checking for legacy files...")
-            
-            # 1. Migrate Encodings
-            enc_dir = "encodings"
-            if os.path.exists(enc_dir):
-                count = 0
-                for fn in os.listdir(enc_dir):
-                    if fn.endswith(".npy"):
-                        name = os.path.splitext(fn)[0]
-                        try:
-                            path = os.path.join(enc_dir, fn)
-                            emb = np.load(path)
-                            user = User(name=name)
-                            user.set_encoding(emb)
-                            db.session.add(user)
-                            count += 1
-                        except Exception as e:
-                            print(f"[Migration] Error migrating {fn}: {e}")
-                db.session.commit()
-                print(f"[Migration] Migrated {count} users.")
-            
-            # 2. Migrate Attendance (Simple approach: just insert valid rows)
-            # Note: This might duplicate if we run it multiple times without checks, but we checked User.query.first()
-            csv_file = "attendance.csv"
-            if os.path.exists(csv_file):
-                print("[Migration] Migrating attendance.csv...")
-                rows_added = 0
-                load_face_encodings() # Ensure we have users loaded or query them
-                
-                # Pre-fetch user map {name: user_id}
-                users_map = {u.name: u.id for u in User.query.all()}
-                
-                try:
-                    with open(csv_file, "r") as f:
-                        reader = csv.reader(f)
-                        for row in reader:
-                            if len(row) >= 2:
-                                name, ts_str = row[0], row[1]
-                                if name in users_map:
-                                    try:
-                                        # Attempt to parse ISO format
-                                        ts = datetime.datetime.fromisoformat(ts_str)
-                                        att = Attendance(user_id=users_map[name], timestamp=ts)
-                                        db.session.add(att)
-                                        rows_added += 1
-                                    except ValueError:
-                                        pass # Ignore invalid dates
-                    db.session.commit()
-                    print(f"[Migration] Migrated {rows_added} attendance records.")
-                except Exception as e:
-                    print(f"[Migration] Error reading CSV: {e}")
-
 # Initial load & Migration
-migrate_legacy_data()
 load_face_encodings()
 
 # --- Helper Functions ---
+
 
 def mark_attendance(name: str) -> tuple[bool, str]:
     """
@@ -132,12 +74,11 @@ def mark_attendance(name: str) -> tuple[bool, str]:
         user = User.query.filter_by(name=name).first()
         if not user:
             return False, "User not found in DB."
-            
+
         # Check if already present today (UTC)
         today_start = datetime.datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         existing_attendance = Attendance.query.filter(
-            Attendance.user_id == user.id,
-            Attendance.timestamp >= today_start
+            Attendance.user_id == user.id, Attendance.timestamp >= today_start
         ).first()
 
         if existing_attendance:
@@ -153,10 +94,11 @@ def mark_attendance(name: str) -> tuple[bool, str]:
         print(f"[Error] Marking attendance: {e}")
         return False, "Database Error"
 
+
 def decode_base64_to_image(data_url: str) -> np.ndarray:
     """
     Decodes a base64 data URL into an OpenCV image (BGR).
-    
+
     Args:
         data_url (str): Base64 string (e.g. "data:image/jpeg;base64,...").
 
@@ -168,7 +110,7 @@ def decode_base64_to_image(data_url: str) -> np.ndarray:
             _, encoded = data_url.split(",", 1)
         else:
             encoded = data_url
-            
+
         data = base64.b64decode(encoded)
         np_arr = np.frombuffer(data, np.uint8)
         img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -183,18 +125,18 @@ def build_attendance_query(request_args):
     Helper function to build SQLAlchemy query based on request arguments.
     Supports: date/time range, specific Y/M/D, and user_id.
     """
-    user_id = request_args.get('user_id', type=int)
-    
+    user_id = request_args.get("user_id", type=int)
+
     # Advanced Date Filters
-    start_iso = request_args.get('start_iso') # ISO8601 string
-    end_iso = request_args.get('end_iso')     # ISO8601 string
-    
-    year = request_args.get('year', type=int)
-    month = request_args.get('month', type=int)
-    day = request_args.get('day', type=int)
-    
+    start_iso = request_args.get("start_iso")  # ISO8601 string
+    end_iso = request_args.get("end_iso")  # ISO8601 string
+
+    year = request_args.get("year", type=int)
+    month = request_args.get("month", type=int)
+    day = request_args.get("day", type=int)
+
     # Legacy/Simple Date Filter (YYYY-MM-DD)
-    date_str = request_args.get('date')
+    date_str = request_args.get("date")
 
     query = db.session.query(Attendance, User.name).join(User, Attendance.user_id == User.id)
 
@@ -205,20 +147,20 @@ def build_attendance_query(request_args):
     # Usually range is specific enough.
     if start_iso and end_iso:
         try:
-            start_dt = datetime.datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
-            end_dt = datetime.datetime.fromisoformat(end_iso.replace('Z', '+00:00'))
+            start_dt = datetime.datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+            end_dt = datetime.datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
             query = query.filter(Attendance.timestamp >= start_dt, Attendance.timestamp <= end_dt)
         except ValueError:
             pass
-    
+
     # 2. Granular Filters (Year/Month/Day)
     # Applied if range is not fully specifying everything or used in conjunction
     if year:
-        query = query.filter(extract('year', Attendance.timestamp) == year)
+        query = query.filter(extract("year", Attendance.timestamp) == year)
     if month:
-        query = query.filter(extract('month', Attendance.timestamp) == month)
+        query = query.filter(extract("month", Attendance.timestamp) == month)
     if day:
-        query = query.filter(extract('day', Attendance.timestamp) == day)
+        query = query.filter(extract("day", Attendance.timestamp) == day)
 
     # 3. Legacy Date Filter (Fallback if no advanced filters)
     if date_str and not (start_iso or year or month or day):
@@ -231,39 +173,46 @@ def build_attendance_query(request_args):
 
     return query.order_by(desc(Attendance.timestamp))
 
+
 # --- Routes ---
 
-@app.route('/')
+
+@app.route("/")
 def index():
     """Renders the home page."""
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/register')
+
+@app.route("/register")
 def register_page():
     """Renders the face registration page."""
-    return render_template('register.html')
+    return render_template("register.html")
 
-@app.route('/recognize')
+
+@app.route("/recognize")
 def recognize_page():
     """
     Renders the face recognition/attendance page.
     Refreshes encodings on load to ensure new registrations are active.
     """
     load_face_encodings()
-    return render_template('recognize.html')
+    return render_template("recognize.html")
 
-@app.route('/docs')
+
+@app.route("/docs")
 def docs_page():
     """Renders the documentation page."""
-    return render_template('docs/index.html')
+    return render_template("docs/index.html")
 
-@app.route('/reports')
+
+@app.route("/reports")
 def reports_page():
     """Renders the reports page."""
     users = User.query.with_entities(User.id, User.name).all()
-    return render_template('reports.html', users=users)
+    return render_template("reports.html", users=users)
 
-@app.route('/api/attendance_records')
+
+@app.route("/api/attendance_records")
 def get_attendance_records():
     """
     API to fetch attendance records with optional filters.
@@ -276,18 +225,22 @@ def get_attendance_records():
     """
     query = build_attendance_query(request.args)
     records = query.all()
-    
-    data = [{
-        "id": att.id,
-        "name": name,
-        "timestamp": att.timestamp.isoformat(),
-        "date_str": att.timestamp.strftime("%Y-%m-%d"),
-        "time_str": att.timestamp.strftime("%H:%M:%S")
-    } for att, name in records]
-    
+
+    data = [
+        {
+            "id": att.id,
+            "name": name,
+            "timestamp": att.timestamp.isoformat(),
+            "date_str": att.timestamp.strftime("%Y-%m-%d"),
+            "time_str": att.timestamp.strftime("%H:%M:%S"),
+        }
+        for att, name in records
+    ]
+
     return jsonify(data)
 
-@app.route('/api/export/csv')
+
+@app.route("/api/export/csv")
 def export_csv():
     """Export attendance records to CSV."""
     query = build_attendance_query(request.args)
@@ -298,43 +251,43 @@ def export_csv():
     writer.writerow(["ID", "Name", "Date", "Time", "Timestamp"])
 
     for att, name in records:
-        writer.writerow([
-            att.id,
-            name,
-            att.timestamp.strftime("%Y-%m-%d"),
-            att.timestamp.strftime("%H:%M:%S"),
-            att.timestamp.isoformat()
-        ])
-    
+        writer.writerow(
+            [
+                att.id,
+                name,
+                att.timestamp.strftime("%Y-%m-%d"),
+                att.timestamp.strftime("%H:%M:%S"),
+                att.timestamp.isoformat(),
+            ]
+        )
+
     output.seek(0)
-    
+
     return send_file(
-        io.BytesIO(output.getvalue().encode('utf-8')),
+        io.BytesIO(output.getvalue().encode("utf-8")),
         mimetype="text/csv",
         as_attachment=True,
-        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.csv",
     )
 
-@app.route('/api/export/json')
+
+@app.route("/api/export/json")
 def export_json():
     """Export attendance records to JSON."""
     query = build_attendance_query(request.args)
     records = query.all()
 
-    data = [{
-        "id": att.id,
-        "name": name,
-        "timestamp": att.timestamp.isoformat()
-    } for att, name in records]
+    data = [{"id": att.id, "name": name, "timestamp": att.timestamp.isoformat()} for att, name in records]
 
     return send_file(
-        io.BytesIO(json.dumps(data, indent=2).encode('utf-8')),
+        io.BytesIO(json.dumps(data, indent=2).encode("utf-8")),
         mimetype="application/json",
         as_attachment=True,
-        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.json"
+        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.json",
     )
 
-@app.route('/api/export/excel')
+
+@app.route("/api/export/excel")
 def export_excel():
     """Export attendance records to Excel (XLSX)."""
     query = build_attendance_query(request.args)
@@ -343,20 +296,22 @@ def export_excel():
     wb = Workbook()
     ws = wb.active
     ws.title = "Attendance Report"
-    
+
     # Headers
     headers = ["ID", "Name", "Date", "Time", "Timestamp"]
     ws.append(headers)
 
     for att, name in records:
-        ws.append([
-            att.id,
-            name,
-            att.timestamp.strftime("%Y-%m-%d"),
-            att.timestamp.strftime("%H:%M:%S"),
-            att.timestamp.isoformat()
-        ])
-    
+        ws.append(
+            [
+                att.id,
+                name,
+                att.timestamp.strftime("%Y-%m-%d"),
+                att.timestamp.strftime("%H:%M:%S"),
+                att.timestamp.isoformat(),
+            ]
+        )
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -365,10 +320,11 @@ def export_excel():
         output,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
-        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+        download_name=f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx",
     )
 
-@app.route('/api/register_capture', methods=['POST'])
+
+@app.route("/api/register_capture", methods=["POST"])
 def api_register_capture():
     """
     API call to register a new face from a captured image.
@@ -384,23 +340,23 @@ def api_register_capture():
 
     name = req_data.name
     image_data = req_data.image
-    
+
     frame = decode_base64_to_image(image_data)
     if frame is None:
         return jsonify({"success": False, "message": "Invalid image data."})
 
     # Convert to RGB for Mediapipe
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
+
     # Detect faces
     face_bboxes = face_utils.detect_faces_rgb(rgb_frame)
     if not face_bboxes:
         return jsonify({"success": False, "message": "No face detected. Please try again."})
 
     # Pick the largest face (Assumption: User is close to camera)
-    sorted_bboxes = sorted(face_bboxes, key=lambda b: (b[2]-b[0])*(b[3]-b[1]), reverse=True)
+    sorted_bboxes = sorted(face_bboxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
     target_box = sorted_bboxes[0]
-    
+
     # Preprocess and Align
     face_tensor = face_utils.preprocess_face(rgb_frame, target_box)
     if face_tensor is None:
@@ -408,124 +364,133 @@ def api_register_capture():
 
     # Generate Embedding
     face_embedding = face_utils.get_embedding_from_face_tensor(face_tensor)
-    
+
     # Save to DB
     try:
         existing = User.query.filter_by(name=name).first()
         if existing:
-             # Update existing? or Reject? Let's update.
-             existing.set_encoding(face_embedding)
-             db.session.commit()
-             msg = f"Updated registration for {name}."
+            # Update existing? or Reject? Let's update.
+            existing.set_encoding(face_embedding)
+            db.session.commit()
+            msg = f"Updated registration for {name}."
         else:
             new_user = User(name=name)
             new_user.set_encoding(face_embedding)
             db.session.add(new_user)
             db.session.commit()
             msg = f"Successfully registered {name}!"
-            
+
         # Reload to update memory
         load_face_encodings()
-        
+
         return jsonify({"success": True, "message": msg})
     except Exception as e:
         db.session.rollback()
         print(f"[Error] DB Save: {e}")
         return jsonify({"success": False, "message": "Database error saving user."})
 
-@app.route('/api/recognize', methods=['POST'])
+
+@app.route("/api/recognize", methods=["POST"])
 def api_recognize():
     """
     API call to recognize faces in a frame and mark attendance.
     Validates with Pydantic.
     """
     if not face_utils:
-        return jsonify(RecognizeResponse(success=False, matches=[], attendance_error="Server not initialized").model_dump())
+        return jsonify(
+            RecognizeResponse(success=False, matches=[], attendance_error="Server not initialized").model_dump()
+        )
 
     try:
         req_data = RecognizeRequest(**request.json)
     except ValidationError as e:
-        return jsonify({"success": False, "matches": [], "attendance_error": str(e)}), 400
+        # return jsonify({"success": False, "matches": [], "attendance_error": str(e)}), 400
+        return jsonify(RecognizeResponse(success=False, matches=[], attendance_error=str(e)).model_dump())
 
     image_data = req_data.image
-    
+
     frame = decode_base64_to_image(image_data)
     if frame is None:
         return jsonify(RecognizeResponse(success=False, matches=[]).model_dump())
 
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     face_bboxes = face_utils.detect_faces_rgb(rgb_frame)
-    
+
     matches_payload = []
     attendance_error = None
-    
+
     known_names = list(known_face_encodings.keys())
-    
+
     if known_names:
         # Stack all known vectors for batch matrix multiplication
         # Shape: (N, 512)
         known_vectors = np.stack([known_face_encodings[n] for n in known_names], axis=0)
-        
+
         for box in face_bboxes:
             # box is [x1, y1, x2, y2]
             face_tensor = face_utils.preprocess_face(rgb_frame, box)
-            
+
             name = "Unknown"
             similarity_score = 0.0
             is_newly_marked = False
-            
+
             if face_tensor is not None:
                 # Get embedding for current face
                 current_embedding = face_utils.get_embedding_from_face_tensor(face_tensor)
-                
+
                 # Compare with all known faces (Cosine Similarity)
                 # Dot product of normalized vectors = Cosine Similarity
                 similarities = np.dot(known_vectors, current_embedding)
-                
+
                 best_idx = int(np.argmax(similarities))
                 best_similarity = float(similarities[best_idx])
-                
+
                 if best_similarity >= RECOGNITION_THRESHOLD:
                     name = known_names[best_idx]
                     similarity_score = best_similarity
-                    
+
                     # Attendance Logic
                     current_time = time.time()
                     last_time = last_seen_timestamps.get(name)
-                    
+
                     if (last_time is None) or (current_time - last_time > ATTENDANCE_COOLDOWN_SECONDS):
                         success, msg = mark_attendance(name)
                         if success:
                             last_seen_timestamps[name] = current_time
                             is_newly_marked = True
+                                # success case: keep `attendance_error` None -- we use `newly_marked` on the client
                         else:
                             attendance_error = msg
-            
-            matches_payload.append(AttendanceMatch(
-                box=box, 
-                name=name, 
-                similarity=float(similarity_score), 
-                newly_marked=is_newly_marked
-            ))
+
+            matches_payload.append(
+                AttendanceMatch(box=box, name=name, similarity=float(similarity_score), newly_marked=is_newly_marked)
+            )
+
     else:
         # No known encodings, but we detected faces
         for box in face_bboxes:
-            matches_payload.append(AttendanceMatch(
-                box=box,
-                name="Unknown (Empty DB)",
-                similarity=0.0,
-                newly_marked=False
-            ))
+            matches_payload.append(
+                AttendanceMatch(box=box, name="Unknown (Empty DB)", similarity=0.0, newly_marked=False)
+            )
 
-    return jsonify(RecognizeResponse(
-        success=True, 
-        matches=matches_payload, 
-        attendance_error=attendance_error
-    ).model_dump())
+    # Logging outgoing payload for debug: show match names and newly_marked flags
+    try:
+        debug_matches = []
+        for m in matches_payload:
+            if hasattr(m, 'name'):
+                debug_matches.append((m.name, m.newly_marked))
+            else:
+                debug_matches.append((m.get('name'), m.get('newly_marked')))
+        print(f"[DEBUG] Recognition response - matches: {debug_matches}, attendance_error: {attendance_error}")
+    except Exception:
+        print("[DEBUG] Recognition response - unable to inspect matches payload (non-serializable types)")
+
+    return jsonify(RecognizeResponse(success=True, matches=matches_payload, attendance_error=attendance_error).model_dump())
+
 
 if __name__ == "__main__":
     # Ensure encodings directory exists
     os.makedirs("encodings", exist_ok=True)
     # Run the app
     # Debug=True is great for development
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=False)
