@@ -69,16 +69,36 @@ load_face_encodings()
 def mark_attendance(name: str) -> tuple[bool, str]:
     """
     Marks attendance for a user in the Database.
+    Uses local timezone to determine "today" to avoid timezone-related bugs.
     """
     try:
         user = User.query.filter_by(name=name).first()
         if not user:
             return False, "User not found in DB."
 
-        # Check if already present today (UTC)
-        today_start = datetime.datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Get current local time and determine today's boundaries
+        now_local = datetime.datetime.now()
+        today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end_local = now_local.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Convert to UTC for database comparison
+        # Assume local timezone offset (this works for systems with fixed timezone)
+        # Get the UTC offset by comparing naive local time with UTC time
+        utc_now = datetime.datetime.utcnow()
+        local_now = datetime.datetime.now()
+        offset = local_now - utc_now
+        
+        today_start_utc = today_start_local - offset
+        today_end_utc = today_end_local - offset
+        
+        # Make them timezone-aware for comparison with DB
+        today_start_utc = today_start_utc.replace(tzinfo=datetime.timezone.utc)
+        today_end_utc = today_end_utc.replace(tzinfo=datetime.timezone.utc)
+        
         existing_attendance = Attendance.query.filter(
-            Attendance.user_id == user.id, Attendance.timestamp >= today_start
+            Attendance.user_id == user.id,
+            Attendance.timestamp >= today_start_utc,
+            Attendance.timestamp <= today_end_utc
         ).first()
 
         if existing_attendance:

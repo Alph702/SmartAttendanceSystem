@@ -6,6 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='assets/logo.ico') }}" type="image/x-icon">
     <title>{% block title %}Smart Attendance{% endblock %}</title>
 
     <!-- PWA Settings -->
@@ -46,10 +47,6 @@
         });
       }
     </script>
-
-    <style>
-      /* Specific page overrides can go here */
-    </style>
   </head>
 
   <body>
@@ -62,26 +59,10 @@
       "
     >
       <a href="/" class="nav-brand">
-        <svg
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M2 12h5" />
-          <path d="M7 12v3a4 4 0 0 0 4 4h2a4 4 0 0 0 4-4v-3" />
-          <path d="M17 12h5" />
-          <path d="M12 7V3" />
-          <path d="M12 17v4" />
-          <path d="M4 5l3 3" />
-          <path d="M20 5l-3 3" />
-          <path d="M4 19l3-3" />
-          <path d="M20 19l-3-3" />
-        </svg>
+        <img
+          src="{{ url_for('static', filename='assets/logo.png') }}"
+          alt="SmartFace" width="24" height="24"
+        />
         SmartFace
       </a>
       <div class="nav-links">
