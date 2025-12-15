@@ -241,7 +241,7 @@ function startRecognitionLoop() {
 
             const data = await response.json();
 
-            // console.log(data)
+            console.log(data)
 
             // 4. Update UI based on response
             if (data.attendance_error) {
@@ -260,18 +260,37 @@ function startRecognitionLoop() {
 
                     openModal("Notice", "Already marked present today.", "#FFD700", likelyUser); // Gold/Yellow
                     // Or use a hex that matches a warning style. 
+                } else if (data.attendance_error.includes("Success")) {
+                    let likelyUser = null;
+                    if (data.matches && data.matches.length > 0) {
+                        const known = data.matches.find(m => m.name !== "Unknown" && !m.name.startsWith("Unknown"));
+                        if (known) likelyUser = known.name;
+                    }
+                    if (likelyUser) {
+                        openModal("Marked!", "You are narked present today.", "var(--success)", likelyUser);
+                    }
                 }
             } else {
                 // Show a "Marked" modal only if the server explicitly flagged
                 // the match as newly marked (m.newly_marked === true).
-                let newlyMarked = null;
+                // let newlyMarked = null;
+                // if (data.matches && data.matches.length > 0) {
+                //     newlyMarked = data.matches.find(m => m.newly_marked === true);
+                //     console.log(newlyMarked)
+                // }
+                // if (newlyMarked) {
+                //     // Use a consistent user-facing message and include the name
+                //     // for clarity in multi-face scenarios.
+                //     console.log("Marked!", `${newlyMarked.name} is marked present today.`, "var(--success)", newlyMarked.name)
+                //     openModal("Marked!", `${newlyMarked.name} is marked present today.`, "var(--success)", newlyMarked.name);
+                // }
+                let likelyUser = null;
                 if (data.matches && data.matches.length > 0) {
-                    newlyMarked = data.matches.find(m => m.newly_marked === true);
+                    const known = data.matches.find(m => m.name !== "Unknown" && !m.name.startsWith("Unknown"));
+                    if (known) likelyUser = known.name;
                 }
-                if (newlyMarked) {
-                    // Use a consistent user-facing message and include the name
-                    // for clarity in multi-face scenarios.
-                    openModal("Marked!", `${newlyMarked.name} is marked present today.`, "var(--success)", newlyMarked.name);
+                if (likelyUser) {
+                    openModal("Marked!", "You are narked present today.", "var(--success)", likelyUser);
                 }
                 statusLabel.innerText = "● System Active";
                 statusLabel.style.color = "var(--success)";

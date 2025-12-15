@@ -478,6 +478,7 @@ def api_recognize():
                         if success:
                             last_seen_timestamps[name] = current_time
                             is_newly_marked = True
+                            attendance_error = msg
                                 # success case: keep `attendance_error` None -- we use `newly_marked` on the client
                         else:
                             attendance_error = msg
