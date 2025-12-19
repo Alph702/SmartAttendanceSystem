@@ -267,7 +267,7 @@ function startRecognitionLoop() {
                         if (known) likelyUser = known.name;
                     }
                     if (likelyUser) {
-                        openModal("Marked!", "You are narked present today.", "var(--success)", likelyUser);
+                        openModal("Marked!", "You are marked present today.", "var(--success)", likelyUser);
                     }
                 }
             } else {
@@ -290,7 +290,7 @@ function startRecognitionLoop() {
                     if (known) likelyUser = known.name;
                 }
                 if (likelyUser) {
-                    openModal("Marked!", "You are narked present today.", "var(--success)", likelyUser);
+                    openModal("Marked!", "You are marked present today.", "var(--success)", likelyUser);
                 }
                 statusLabel.innerText = "● System Active";
                 statusLabel.style.color = "var(--success)";
