@@ -13,6 +13,7 @@ import os
 import time
 
 import cv2
+import math
 import numpy as np
 from flask import Flask, jsonify, render_template, request, send_file
 from openpyxl import Workbook
@@ -63,7 +64,26 @@ def load_face_encodings():
 # Initial load & Migration
 load_face_encodings()
 
+# --- Geofencing Config ---
+SCHOOL_LAT = 25.547711389455454
+SCHOOL_LON = 68.85110914119421
+SCHOOL_RADIUS = 150  # meters
+MAX_ACCURACY = 150    # meters (increased for better compatibility with indoor/urban use)
+
 # --- Helper Functions ---
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000 # Earth radius (meters)
+
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+
+    a = (math.sin(dphi / 2) ** 2 +
+         math.cos(phi1) * math.cos(phi2) *
+         math.sin(dlambda / 2) ** 2)
+
+    return 2 * R * math.asin(math.sqrt(a))
 
 
 def mark_attendance(name: str) -> tuple[bool, str]:
@@ -428,6 +448,33 @@ def api_recognize():
         return jsonify(RecognizeResponse(success=False, matches=[], attendance_error=str(e)).model_dump())
 
     image_data = req_data.image
+    lat = req_data.latitude
+    lon = req_data.longitude
+    accuracy = req_data.accuracy
+
+    # Geofencing Validation
+    if lat is None or lon is None:
+        return jsonify(RecognizeResponse(success=False, matches=[], attendance_error="Location required 📍").model_dump())
+    
+    if accuracy is not None and accuracy > MAX_ACCURACY:
+        return jsonify(RecognizeResponse(
+            success=False, 
+            matches=[], 
+            attendance_error="GPS accuracy too low 📡",
+            current_accuracy=accuracy,
+            max_accuracy=MAX_ACCURACY
+        ).model_dump())
+
+    distance = haversine(lat, lon, SCHOOL_LAT, SCHOOL_LON)
+    if distance > SCHOOL_RADIUS:
+        return jsonify(RecognizeResponse(
+            success=False, 
+            matches=[], 
+            attendance_error="You are outside school ❌",
+            school_lat=SCHOOL_LAT,
+            school_lon=SCHOOL_LON,
+            school_radius=SCHOOL_RADIUS
+        ).model_dump())
 
     frame = decode_base64_to_image(image_data)
     if frame is None:

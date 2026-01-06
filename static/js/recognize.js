@@ -18,6 +18,7 @@ const modalTitle = document.getElementById("modalTitle");
 const modalMessage = document.getElementById("modalMessage");
 const modalButton = document.getElementById("modalButton");
 const videoContainer = document.querySelector(".fullscreen-video-container");
+const geofenceMapContainer = document.getElementById("geofenceMapContainer");
 
 // Configuration
 const CONFIG = {
@@ -33,6 +34,29 @@ let currentModalUser = null;
 let framesWithoutUser = 0;
 const MAX_MISSING_FRAMES = 4; // Approx 2 seconds grace period
 let acknowledgedUsers = new Map(); // Name -> framesMissingCount
+
+// Geolocation tracking
+let currentCoords = { latitude: null, longitude: null, accuracy: null };
+
+if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+        (position) => {
+            currentCoords.latitude = position.coords.latitude;
+            currentCoords.longitude = position.coords.longitude;
+            currentCoords.accuracy = position.coords.accuracy;
+            console.log("Location updated:", currentCoords);
+        },
+        (error) => {
+            console.warn("Geolocation Error:", error.message);
+            statusLabel.innerText = "● Location Error: " + error.message;
+            statusLabel.style.color = "var(--danger)";
+        },
+        { enableHighAccuracy: true }
+    );
+} else {
+    statusLabel.innerText = "● Geolocation not supported";
+    statusLabel.style.color = "var(--danger)";
+}
 
 // --- Initialization ---
 
@@ -65,9 +89,125 @@ async function startCamera() {
 
 startCamera();
 
-// --- UI Helpers ---
+/**
+ * Renders a mini SVG map showing the school and user's relative position.
+ * Includes dynamic scaling to ensure both are always in view.
+ */
+function renderGeofenceMap(userLat, userLon, userAcc, schoolLat, schoolLon, schoolRadius) {
+    if (!userLat || !userLon || !schoolLat || !schoolLon) return;
 
-function openModal(title, message, colorVar, relatedUser = null) {
+    const size = 220; // Slightly larger
+    const center = size / 2;
+    const padding = 20;
+
+    // Haversine distance
+    const R = 6371000;
+    const phi1 = userLat * Math.PI / 180;
+    const phi2 = schoolLat * Math.PI / 180;
+    const dphi = (schoolLat - userLat) * Math.PI / 180;
+    const dlambda = (schoolLon - userLon) * Math.PI / 180;
+    const a = Math.sin(dphi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dlambda / 2) ** 2;
+    const distanceBody = 2 * R * Math.asin(Math.sqrt(a));
+
+    // Scaling logic
+    const maxMeters = Math.max(schoolRadius, distanceBody + (userAcc || 0)) * 1.3;
+    const scale = (size / 2 - padding) / maxMeters;
+
+    // Relative offsets
+    const dx = (userLon - schoolLon) * 111320 * Math.cos(schoolLat * Math.PI / 180) * scale;
+    const dy = (schoolLat - userLat) * 110540 * scale;
+
+    const svg = `
+        <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="background: #0a0a0a; border-radius: 50%; border: 2px solid rgba(255,255,255,0.1); box-shadow: inset 0 0 20px rgba(0,255,127,0.1);">
+            <defs>
+                <radialGradient id="gradSchool" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stop-color="#00FF7F" stop-opacity="0.2" />
+                    <stop offset="100%" stop-color="#00FF7F" stop-opacity="0" />
+                </radialGradient>
+                <radialGradient id="gradUser" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stop-color="#FF4D4D" stop-opacity="0.3" />
+                    <stop offset="100%" stop-color="#FF4D4D" stop-opacity="0" />
+                </radialGradient>
+            </defs>
+
+            <!-- Radar Grid -->
+            <circle cx="${center}" cy="${center}" r="${(size / 2 - padding) * 0.33}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+            <circle cx="${center}" cy="${center}" r="${(size / 2 - padding) * 0.66}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+            <line x1="${center}" y1="${padding}" x2="${center}" y2="${size - padding}" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+            <line x1="${padding}" y1="${center}" x2="${size - padding}" y2="${center}" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+
+            <!-- SCHOOL: Geofence Zone -->
+            <circle cx="${center}" cy="${center}" r="${schoolRadius * scale}" fill="url(#gradSchool)" stroke="#00FF7F" stroke-width="1.5" stroke-dasharray="3,3" />
+            
+            <!-- SCHOOL: Marker -->
+            <circle cx="${center}" cy="${center}" r="4" fill="#00FF7F">
+                <animate attributeName="opacity" values="1;0.5;1" dur="3s" repeatCount="indefinite" />
+            </circle>
+            <text x="${center}" y="${center - 12}" fill="#00FF7F" font-size="10" font-weight="900" text-anchor="middle" style="text-shadow: 0 0 5px rgba(0,255,127,0.5);">SCHOOL</text>
+
+            <!-- USER: Accuracy Zone -->
+            <circle cx="${center + dx}" cy="${center + dy}" r="${userAcc * scale}" fill="url(#gradUser)" stroke="#FF4D4D" stroke-width="1" stroke-dasharray="2,2" />
+            
+            <!-- USER: Marker -->
+            <circle cx="${center + dx}" cy="${center + dy}" r="6" fill="#FF4D4D">
+                <animate attributeName="r" values="5;7;5" dur="1.5s" repeatCount="indefinite" />
+            </circle>
+            
+            <!-- Dynamic Label Positioning to prevent clipping -->
+            <text x="${center + dx}" y="${dy < 0 ? center + dy + 22 : center + dy - 18}" 
+                  fill="#FF4D4D" font-size="10" font-weight="900" text-anchor="middle" 
+                  style="text-shadow: 0 0 5px rgba(255,77,77,0.5);">
+                YOU
+            </text>
+            
+            <!-- Stats Footer -->
+            <rect x="0" y="${size - 25}" width="${size}" height="25" fill="rgba(0,0,0,0.6)" />
+            <text x="${center}" y="${size - 10}" fill="rgba(255,255,255,0.6)" font-size="9" font-weight="600" text-anchor="middle">
+                ${Math.round(distanceBody)}m Away
+            </text>
+
+
+        </svg>
+    `;
+
+    geofenceMapContainer.innerHTML = svg;
+    geofenceMapContainer.style.display = "block";
+}
+
+/**
+ * Renders an accuracy visualization comparing current vs required accuracy.
+ */
+function renderAccuracyGauge(current, required) {
+    const size = 200;
+    const center = size / 2;
+    const radius = 60;
+
+    // Calculate percentage (clamped 0-1) 
+    const ratio = Math.min(required / current, 1.0);
+    const angle = ratio * Math.PI; // Half circle
+
+    const svg = `
+        <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+            <path d="M 40 ${center} A ${radius} ${radius} 0 0 1 160 ${center}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="12" stroke-linecap="round" />
+            <path d="M 40 ${center} A ${radius} ${radius} 0 0 1 ${center + radius * Math.cos(Math.PI + angle)} ${center + radius * Math.sin(Math.PI + angle)}" 
+                  fill="none" stroke="${ratio > 0.8 ? '#00FF7F' : '#FFD700'}" stroke-width="12" stroke-linecap="round" />
+            <text x="${center}" y="${center + 25}" fill="white" font-size="14" font-weight="bold" text-anchor="middle">${Math.round(current)}m</text>
+            <text x="${center}" y="${center + 45}" fill="rgba(255,255,255,0.5)" font-size="10" text-anchor="middle">Current Accuracy</text>
+            <text x="${center}" y="${center - 15}" fill="rgba(255,255,255,0.4)" font-size="9" text-anchor="middle">Required: < ${required}m</text>
+            <g transform="translate(${center - 15}, ${center - 50})">
+                <rect x="0" y="10" width="4" height="4" fill="${ratio > 0.2 ? '#FFD700' : 'rgba(255,255,255,0.1)'}" />
+                <rect x="6" y="7" width="4" height="7" fill="${ratio > 0.5 ? '#FFD700' : 'rgba(255,255,255,0.1)'}" />
+                <rect x="12" y="4" width="4" height="10" fill="${ratio > 0.8 ? '#00FF7F' : 'rgba(255,255,255,0.1)'}" />
+                <rect x="18" y="0" width="4" height="14" fill="${ratio >= 1.0 ? '#00FF7F' : 'rgba(255,255,255,0.1)'}" />
+            </g>
+        </svg>
+    `;
+
+    geofenceMapContainer.innerHTML = svg;
+    geofenceMapContainer.style.display = "block";
+}
+
+function openModal(title, message, colorVar, relatedUser = null, visualData = null) {
     // If modal is already open for THIS user, just return (avoid flicker)
     if (isSuccessModalOpen && currentModalUser === relatedUser && relatedUser !== null) {
         return;
@@ -86,6 +226,25 @@ function openModal(title, message, colorVar, relatedUser = null) {
     modalTitle.innerText = title;
     modalMessage.innerText = message;
 
+    // Handle Visuals
+    if (visualData) {
+        if (visualData.type === 'geofence') {
+            renderGeofenceMap(
+                visualData.userLat,
+                visualData.userLon,
+                visualData.userAcc,
+                visualData.schoolLat,
+                visualData.schoolLon,
+                visualData.schoolRadius
+            );
+        } else if (visualData.type === 'accuracy') {
+            renderAccuracyGauge(visualData.current, visualData.required);
+        }
+    } else {
+        geofenceMapContainer.style.display = "none";
+        geofenceMapContainer.innerHTML = "";
+    }
+
     // Update Colors
     // colorVar should be like "var(--success)" or "var(--warning)" or hex
     modalPanel.style.borderColor = colorVar;
@@ -93,6 +252,12 @@ function openModal(title, message, colorVar, relatedUser = null) {
     modalIcon.style.backgroundColor = colorVar;
     modalTitle.style.color = colorVar;
     modalButton.style.backgroundColor = colorVar;
+
+    // Ensure high contrast for text/icon inside colored elements
+    modalButton.style.color = "#FFD700";
+    modalButton.style.fontWeight = "bold";
+    const iconSvg = modalIcon.querySelector('svg');
+    if (iconSvg) iconSvg.style.stroke = "#FFD700";
 
     successModal.style.display = "flex";
 }
@@ -236,7 +401,12 @@ function startRecognitionLoop() {
             const response = await fetch("/api/recognize", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image: imageData }),
+                body: JSON.stringify({
+                    image: imageData,
+                    latitude: currentCoords.latitude,
+                    longitude: currentCoords.longitude,
+                    accuracy: currentCoords.accuracy
+                }),
             });
 
             const data = await response.json();
@@ -260,6 +430,28 @@ function startRecognitionLoop() {
 
                     openModal("Notice", "Already marked present today.", "#FFD700", likelyUser); // Gold/Yellow
                     // Or use a hex that matches a warning style. 
+                } else if (data.attendance_error.includes("outside school")) {
+                    let likelyUser = null;
+                    if (data.matches && data.matches.length > 0) {
+                        const known = data.matches.find(m => m.name !== "Unknown" && !m.name.startsWith("Unknown"));
+                        if (known) likelyUser = known.name;
+                    }
+
+                    openModal("Outside Boundary", "You must be inside school to mark attendance.", "var(--danger)", likelyUser, {
+                        type: 'geofence',
+                        userLat: currentCoords.latitude,
+                        userLon: currentCoords.longitude,
+                        userAcc: currentCoords.accuracy,
+                        schoolLat: data.school_lat,
+                        schoolLon: data.school_lon,
+                        schoolRadius: data.school_radius
+                    });
+                } else if (data.attendance_error.includes("accuracy too low")) {
+                    openModal("Low GPS Accuracy", "Your GPS signal is too weak. Try moving to an open area.", "var(--warning)", null, {
+                        type: 'accuracy',
+                        current: data.current_accuracy,
+                        required: data.max_accuracy
+                    });
                 } else if (data.attendance_error.includes("Success")) {
                     let likelyUser = null;
                     if (data.matches && data.matches.length > 0) {
